@@ -192,7 +192,7 @@ ul{padding-left:22px}li{margin-bottom:6px}
       <li>它問你<b>要不要接 hook</b></li>
     </ol>
     <p>它的回報大概長這樣：</p>
-    <pre class="out">建了什麼：aiq.py 放在你的專案資料夾，資料都在 .aiq 裡。以後在這個資料夾的對話裡說「把某件事排進佇列，只准改哪些檔」「跑佇列」「現在跑到哪」就好。
+    <pre class="out">建了什麼：aiq.py 放在你的專案資料夾，資料都在 .aiq 裡。以後在這個資料夾的對話裡說「把某件事排進佇列」「跑佇列」「現在跑到哪」就好，要改哪些檔我會自己判斷再告訴你。
 
 驗收結果：T1 通過、T2 通過、T3 通過、T4 通過、T5 通過、T6 通過、T7 通過。
 
@@ -222,10 +222,10 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
 <section id="use"><div class="wrap">
   <h2>平常怎麼用：三句人話</h2>
   <p>裝好之後，在同一個資料夾的對話裡就講人話，不用記指令。下面三句是「意思」不是暗號，你用自己的話講，AI 會對到指令；安裝時它會在資料夾放一份給 AI 看的使用說明（AIQ.md），之後開新對話它也認得。三句：</p>
-  <div class="cmd"><pre><code id="c-say1">把〈某件事〉排進佇列，只准改〈哪些檔〉</code></pre><button class="copy" data-for="c-say1" type="button">複製</button></div>
-  <p class="muted">例如：「把 README 的安裝段改寫成小白步驟排進佇列，只准改 README.md」。AI 會幫你登記，順便把「只准改哪些檔」寫進宣告。</p>
+  <div class="cmd"><pre><code id="c-say1">把〈某件事〉排進佇列</code></pre><button class="copy" data-for="c-say1" type="button">複製</button></div>
+  <p class="muted">例如：「把 README 的安裝段改寫成小白步驟，排進佇列」。<b>要動哪些檔不用你想</b>：AI 看完你的要求和資料夾內容自己判斷，登記完會告訴你一聲「會改的是這幾個檔」。你有特別在意的才補一句「只能動這個檔」，它以你的為準。</p>
   <div class="cmd"><pre><code id="c-say2">跑佇列</code></pre><button class="copy" data-for="c-say2" type="button">複製</button></div>
-  <p class="muted">它會搶一件交給引擎做。想一口氣做到佇列空為止，就說「跑佇列，做到空為止」。</p>
+  <p class="muted">它會搶一件交給引擎做，做完就停。想再做下一件，就再說一次。</p>
   <div class="cmd"><pre><code id="c-say3">現在跑到哪</code></pre><button class="copy" data-for="c-say3" type="button">複製</button></div>
   <p class="muted">它會列出每一件的狀態：排隊中、進行中、完成、失敗、等決定。</p>
   <p>結果會自己出現在下一句對話裡（第 4 步接了 hook 才會）。沒接 hook 也能用，只是要自己問「現在跑到哪」。</p>

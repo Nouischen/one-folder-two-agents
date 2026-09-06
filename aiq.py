@@ -457,7 +457,24 @@ def requeue_task(con, task_id: str) -> None:
     con.execute("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL WHERE id=?", (task_id,))
 
 
-def finalize(con, row: sqlite3.Row, engine: str, rc: int, before: set[str] | None) -> tuple[str, str]:
+def peer_write_scopes(con, task_id: str, started_iso: str) -> list[str]:
+    """這次執行期間，其他任務合法宣告過的 write_scope。
+
+    兩個 AI 真的同時跑時（各開一個 run），A 結束時的 git 快照會看到 B 剛寫出來的檔案。
+    那不是 A 越界——add 的範圍衝突檢查已經保證同時存在的任務 write_scope 不重疊——
+    所以把「當時也在跑、或在這之後才結束」的其他任務的宣告範圍排除掉，否則會誤報。
+    """
+    rows = con.execute(
+        "SELECT write_scope FROM tasks WHERE id<>? AND (status='running' OR finished_at>=?)",
+        (task_id, started_iso)).fetchall()
+    scopes: list[str] = []
+    for r in rows:
+        scopes.extend(json.loads(r["write_scope"]))
+    return scopes
+
+
+def finalize(con, row: sqlite3.Row, engine: str, rc: int, before: set[str] | None,
+             started_iso: str) -> tuple[str, str]:
     """子行程結束後判定 done / needs_decision，並寫回資料庫。"""
     task_id = row["id"]
     tdir = task_dir(task_id)
@@ -468,7 +485,8 @@ def finalize(con, row: sqlite3.Row, engine: str, rc: int, before: set[str] | Non
     else:
         status = "needs_decision"
         result = f"引擎結束但沒有寫結果檔（exit code {rc}，輸出見 {rel(tdir / 'engine.log')}）"
-    bad = strays(before, git_status(), json.loads(row["write_scope"]))
+    allowed = json.loads(row["write_scope"]) + peer_write_scopes(con, task_id, started_iso)
+    bad = strays(before, git_status(), allowed)
     if bad:
         status = "needs_decision"
         result += "\n\n越界改動：" + "、".join(bad) + "，請使用者檢查"
@@ -522,6 +540,7 @@ def run_once(a) -> str:
         result_path.unlink()  # 舊結果不算數，免得引擎秒退還被判 done
     log_path = tdir / "engine.log"
     before = git_status()
+    started_iso = iso(utcnow())
     say(a, f"{task_id} 交給 {engine}（attempt {row['attempt']}），引擎輸出寫在 {rel(log_path)}")
     started = time.monotonic()
     popen_kw: dict = {"cwd": str(ROOT), "env": env, "stdin": subprocess.DEVNULL, "stderr": subprocess.STDOUT}
@@ -552,7 +571,7 @@ def run_once(a) -> str:
             say(a, f"中斷：{task_id} 已放回佇列")
             raise
     elapsed = round(time.monotonic() - started, 1)
-    status, result = finalize(con, row, engine, rc, before)
+    status, result = finalize(con, row, engine, rc, before, started_iso)
     out(a, {"id": task_id, "status": status, "engine": engine, "rc": rc, "seconds": elapsed, "result": result},
         f"{task_id} → {status}（{engine}，rc={rc}，{elapsed}s）\n{result[:RESULT_PREVIEW]}")
     return status
