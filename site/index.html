@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>一個資料夾、兩個 AI｜讓 Claude Code 和 Codex 共用同一個工作區，又不互相踩到</title>
+<meta name="description" content="Claude Code 與 Codex 開同一個專案資料夾，共用一條本機佇列：先登記再做、同一份檔案同一時間只有一個人寫、做完的結果自動回到原本那個對話、只走訂閱不走 API。單檔 Python、零套件。貼一句話給你的 AI，它自己裝好。">
+<meta property="og:title" content="一個資料夾、兩個 AI｜讓 Claude Code 和 Codex 共用同一個工作區">
+<meta property="og:description" content="讓 Claude Code 和 Codex 共用同一個工作區，又不互相踩到。貼一句話給你的 AI，它自己裝，大約十分鐘。">
+<style>
+:root{
+  --accent:#1d4ed8;--accent-d:#1e3a8a;--ink:#172033;--muted:#5b6478;
+  --bg:#f5f7fb;--panel:#fff;--line:#e2e7f0;--soft:#e8eefc;--dark:#0f1c3f;
+  --ok:#0f766e;--warn:#b45309;--bad:#b91c1c;
+  --shadow:0 18px 40px rgba(15,28,63,.08);
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,"Segoe UI",Roboto,system-ui,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+  font-size:17px;line-height:1.85;-webkit-font-smoothing:antialiased}
+h1,h2,h3{line-height:1.3;letter-spacing:.3px;margin:0 0 14px}
+h2{font-size:clamp(24px,3.2vw,32px);font-weight:900}
+h3{font-size:19px;font-weight:800}
+p{margin:0 0 14px}
+a{color:var(--accent-d);text-decoration:none;font-weight:600}
+a:hover{color:var(--accent)}
+code{font-family:ui-monospace,Consolas,"Cascadia Mono",Menlo,monospace;font-size:.92em;background:var(--soft);padding:2px 6px;border-radius:6px}
+pre{background:var(--dark);color:#e6edf7;border-radius:14px;padding:16px 18px;overflow-x:auto;font-size:14px;line-height:1.6;margin:0 0 14px}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.wrap{max-width:900px;margin:0 auto;padding:0 22px}
+.accentbar{height:5px;background:linear-gradient(90deg,#1d4ed8,#60a5fa,#1d4ed8)}
+nav{position:sticky;top:0;z-index:20;background:rgba(245,247,251,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;height:60px;gap:16px}
+nav .logo{font-weight:900;font-size:17px;color:var(--accent);white-space:nowrap}
+nav .sp{margin-left:auto}
+nav .links{white-space:nowrap}
+nav .links a{font-size:14px;margin-left:14px;color:var(--muted)}
+.pillbtn{display:inline-block;background:var(--accent);color:#fff;padding:11px 20px;border-radius:11px;font-weight:800;font-size:15px}
+.pillbtn:hover{background:var(--accent-d);color:#fff}
+.ghost{display:inline-block;border:1.5px solid var(--line);background:#fff;color:var(--accent-d);padding:10px 18px;border-radius:11px;font-weight:800;font-size:15px;margin-left:8px}
+.hero{padding:58px 0 34px}
+.eyebrow{display:inline-block;background:var(--soft);color:var(--accent-d);font-weight:800;font-size:13.5px;padding:5px 13px;border-radius:999px;margin-bottom:14px}
+.hero h1{font-size:clamp(30px,5vw,46px);font-weight:900;margin:0 0 16px}
+.hero h1 .u{background:linear-gradient(transparent 60%,#bfdbfe 60%);padding:0 2px}
+.lead{font-size:19px;color:var(--muted);margin:0 0 22px}
+.byline{color:var(--muted);font-size:14.5px;margin:0 0 14px}
+section{padding:34px 0}
+section+section{border-top:1px solid var(--line)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px 22px;box-shadow:var(--shadow);margin:0 0 16px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:720px){.grid2{grid-template-columns:1fr}.ghost{margin:10px 0 0}}
+@media (max-width:600px){nav .logo{font-size:15px}nav .links a{margin-left:10px;font-size:13px}nav .links a:nth-child(-n+3),nav .links a:nth-child(5){display:none}}
+.flow{display:flex;align-items:stretch;gap:10px;margin:18px 0 8px;flex-wrap:wrap}
+.flow .box{flex:1 1 150px;background:#fff;border:1.5px solid var(--line);border-radius:14px;padding:14px;text-align:center}
+.flow .box b{display:block;font-size:16px;margin-bottom:4px}
+.flow .box small{color:var(--muted);font-size:13px;line-height:1.5;display:block}
+.flow .arr{align-self:center;color:var(--accent);font-weight:900;font-size:22px}
+.flow .box.you{border-color:var(--accent);background:var(--soft)}
+.steps{counter-reset:s;list-style:none;padding:0;margin:0}
+.steps li{position:relative;padding-left:44px;margin:0 0 18px}
+.steps li::before{counter-increment:s;content:counter(s);position:absolute;left:0;top:2px;width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:15px}
+table{width:100%;border-collapse:collapse;font-size:15px;background:#fff;border-radius:12px;overflow:hidden}
+th,td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+th{background:var(--soft);font-weight:800}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;margin:0 0 14px}
+.tag{display:inline-block;font-size:12.5px;font-weight:800;padding:2px 9px;border-radius:999px;margin-right:6px}
+.tag.ok{background:#d1fae5;color:var(--ok)}.tag.warn{background:#fef3c7;color:var(--warn)}.tag.bad{background:#fee2e2;color:var(--bad)}
+.note{border-left:4px solid var(--accent);background:var(--soft);padding:12px 16px;border-radius:0 12px 12px 0;margin:0 0 14px}
+.step{border-left:5px solid var(--accent)}
+.step.done{border-left-color:var(--ok);background:#f6fffb}
+.chk{display:flex;align-items:center;gap:10px;font-size:19px;margin:0 0 10px;cursor:pointer}
+.chk input,.checklist input{width:20px;height:20px;accent-color:var(--accent);flex:none;margin:0 6px 0 0}
+.checklist{list-style:none;padding:0;margin:0}
+.checklist li{margin:0 0 6px}
+.checklist label{display:flex;align-items:flex-start;gap:8px;cursor:pointer}
+.checklist input{margin-top:6px}
+.cmd{position:relative;margin:0 0 12px}
+.cmd pre{padding-right:86px;margin:0;white-space:pre-wrap;word-break:break-all}
+.copy{position:absolute;top:10px;right:10px;background:#fff;color:var(--accent-d);border:1.5px solid var(--line);border-radius:9px;padding:6px 12px;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer}
+.copy:hover{background:var(--soft)}
+.copy.ok{background:#d1fae5;color:var(--ok);border-color:#a7f3d0}
+pre.out{background:#eef2f9;color:#1f2937;border:1px solid var(--line);font-size:13.5px;white-space:pre-wrap;word-break:break-word}
+details{margin:8px 0 4px}summary{cursor:pointer;font-weight:800;color:var(--accent-d)}
+.step ol{padding-left:22px}.step ol li{margin-bottom:6px}
+.muted{color:var(--muted)}
+footer{padding:30px 0 50px;color:var(--muted);font-size:14px;border-top:1px solid var(--line)}
+ul{padding-left:22px}li{margin-bottom:6px}
+</style>
+</head>
+<body>
+<div class="accentbar"></div>
+<nav><div class="wrap">
+  <span class="logo">一個資料夾、兩個 AI</span>
+  <span class="sp"></span>
+  <span class="links"><a href="#why">緣起</a><a href="#what">做什麼</a><a href="#need">需要什麼</a><a href="#install">安裝</a><a href="#use">怎麼用</a><a href="#fail">排錯</a><a href="https://github.com/Nouischen/one-folder-two-agents">GitHub</a></span>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <span class="eyebrow">開源・單檔 Python・不裝套件・不用 API 金鑰・只走訂閱</span>
+  <p class="byline">by <b>陳昱傑</b>（Nouischen）｜骨科醫師，把 Claude Code 與 Codex 當每天的工具在用</p>
+  <h1>一個資料夾、<span class="u">兩個 AI</span></h1>
+  <p class="lead">讓 Claude Code 和 Codex 共用同一個工作區，又不互相踩到。你不用看懂程式，也不用打指令：貼一句話給你的 AI，它自己裝，大約十分鐘。</p>
+  <a class="pillbtn" href="#install">貼一句話就裝好</a>
+  <a class="ghost" href="https://github.com/Nouischen/one-folder-two-agents">看程式碼與設計筆記</a>
+</div></header>
+
+<section id="why"><div class="wrap">
+  <h2>來龍去脈：為什麼會有這個東西</h2>
+  <p>現在很多人同時在用 Claude Code 和 Codex。同業問我：「我本來用 Claude Code，今天開始用 Codex，指定同一個資料夾會不會衝突？還是分開兩個資料夾好？」</p>
+  <p>我的答案是同一個資料夾。分開兩個資料夾，你累積的習慣、流程、資料就分家了：這邊改過的東西那邊看不到，換一個模型接手就錯亂，你還得多一個動作幫它們互相同步，那是多此一舉。</p>
+  <p>再來是額度。一邊的額度快用完，要換另一邊接著做，兩邊就得看到同一份東西，而且接手的那個要知道做到哪了。另一位同業問的正是這個：「額度用完換另一個模型接手，它怎麼知道進度？每次都要寫交接手冊嗎？」</p>
+  <p>最後是互踩。兩個 AI 同時做事，會改到同一份檔案，也會互相看不見對方做過什麼。我自己就撞過：8 月 8 日晚上 Codex 跑完一輪稽核，一個多小時後 Claude 又派了一個工兵做同一件事，兩邊都沒做錯，就是互相看不見，那一次重工是真的花掉的額度。所以要有規矩：<b>先登記再做、同一份檔案同一時間只有一個人寫、做完的結果回到原本那個對話。</b>這頁要裝的東西，就是把這三條規矩做成一個小程式。</p>
+  <div class="flow">
+    <div class="box you"><b>你在對話裡講人話</b><small>「把某件事排進佇列」「跑佇列」「現在跑到哪」</small></div>
+    <div class="arr">→</div>
+    <div class="box"><b>本機佇列</b><small>一個 SQLite 檔，Claude Code 與 Codex 讀同一份；登記、搶單、租約都記在這</small></div>
+    <div class="arr">→</div>
+    <div class="box"><b>引擎去做事</b><small>Claude Code 或 Codex 在背景做，只准改宣告過的檔案</small></div>
+    <div class="arr">→</div>
+    <div class="box you"><b>結果回到對話</b><small>你下一句話一說，結果就自己出現</small></div>
+  </div>
+</div></section>
+
+<section id="what"><div class="wrap">
+  <h2>它做什麼，不做什麼</h2>
+  <div class="grid2">
+    <div class="card"><h3><span class="tag ok">有</span>做的事</h3>
+      <ul>
+        <li><b>登記</b>：每件工作先進佇列，不管誰要做、你在不在旁邊看</li>
+        <li><b>搶單</b>：同一件事只有一個人搶得到；四個行程同時搶，永遠只有一個贏家</li>
+        <li><b>租約</b>：搶到的人拿一張有期限的租約，行程當掉、租約過期，別人才能接手</li>
+        <li><b>一檔一 writer</b>：每件任務先宣告要改哪些檔；同一份檔案同一時間只有一個人寫，範圍重疊又沒先後順序就直接拒收</li>
+        <li><b>續作</b>：做到一半被中斷，下一次接著做，不從頭來</li>
+        <li><b>結果回對話</b>：做完的結果自動出現在你下一句對話裡，不用開儀表板、不用記任務編號</li>
+        <li><b>只走訂閱</b>：啟動引擎前先拔掉 API 金鑰類的環境變數，兩邊都用你登入的訂閱，不會悄悄變成按用量計費</li>
+      </ul>
+    </div>
+    <div class="card"><h3><span class="tag bad">沒有</span>不做的事</h3>
+      <ul>
+        <li>沒有暫存區寫入：引擎直接在你的資料夾裡改檔，不是先改副本再搬回來</li>
+        <li>沒有整波盤點：不會在每一波結束後把整個資料夾掃一遍抓越界；只靠宣告和事後的 git 檢查</li>
+        <li>沒有另一引擎審查：做完不會自動請另一個 AI 再驗一次</li>
+        <li>沒有儀表板、不支援多台電腦</li>
+        <li>沒有常駐服務：你說「跑佇列」它才跑，不會自己在背景一直轉</li>
+        <li>它擋的是兩個聽話的 AI 不小心互踩，不是安全邊界；故意搗蛋的程式它擋不住</li>
+      </ul>
+    </div>
+  </div>
+  <p class="muted">這些「沒有」是完整版才有的東西。完整版綁死在作者自己的環境裡搬不出去，這裡放的是照同一套方法重寫的最小版。</p>
+</div></section>
+
+<section id="need"><div class="wrap">
+  <h2>你需要什麼</h2>
+  <ul>
+    <li><b>Windows 或 Mac。</b>只在 Windows 上實測過；Mac 的路徑寫了但沒機器測，有試過歡迎到 GitHub 回報</li>
+    <li><b>Claude Code 或 Codex，至少一個</b>，而且已經用訂閱帳號登入。兩個都有更好，那就能互相接手</li>
+    <li><b>Python 3.10 以上。</b>不確定有沒有沒關係，AI 會幫你檢查，沒有會教你裝</li>
+    <li><b>一個專案資料夾。</b>不要用家目錄、桌面，也不要用放了很多專案的共用資料夾；佇列是跟著資料夾走的，放錯位置會管到不該管的東西</li>
+  </ul>
+</div></section>
+
+<section id="install"><div class="wrap">
+  <h2>安裝：貼一句話給你的 AI，它自己裝</h2>
+  <p class="muted">會用這個的人，電腦上一定已經有 Claude Code 或 Codex。所以最簡單的裝法不是你打指令，是叫它裝。做完一步就打勾，勾勾會記在你的瀏覽器裡。</p>
+
+  <div class="card step">
+    <label class="chk"><input type="checkbox" data-step="s0"><b>第 0 步：開一個專案資料夾</b></label>
+    <p>例如在「文件」底下新建一個叫 <b>我的AI工作區</b> 的資料夾。已經有在用的專案資料夾就直接用那個，不用另外開。</p>
+    <p class="muted">做完會看到：一個空的（或你原本那個）資料夾。之後裝好的東西、佇列、紀錄全部都在這個資料夾裡，不會跑到別的地方。</p>
+  </div>
+
+  <div class="card step">
+    <label class="chk"><input type="checkbox" data-step="s1"><b>第 1 步：在那個資料夾裡打開 Claude Code 或 Codex</b></label>
+    <p>桌面 App 用「開啟資料夾」選第 0 步那個資料夾。用終端機的人先 <code>cd</code> 進那個資料夾，再打 <code>claude</code> 或 <code>codex</code>。</p>
+    <p class="muted">做完會看到：AI 的對話框，而且它顯示的工作目錄就是那個資料夾。位置不對就先關掉重開，因為佇列會裝在它當下站的那個資料夾。</p>
+  </div>
+
+  <div class="card step">
+    <label class="chk"><input type="checkbox" data-step="s2"><b>第 2 步：把這句貼給它，按送出</b></label>
+    <div class="cmd"><pre><code id="c-install">請先檢查這台電腦有沒有 Python 3.10 以上，沒有就用白話告訴我怎麼裝，裝好再繼續。然後把 https://github.com/Nouischen/one-folder-two-agents 複製到一個暫存位置，讀它的 BUILD_SPEC.md，把 aiq.py 放進我現在這個專案資料夾，照 BUILD_SPEC.md 第 7 節跑驗收 T1 到 T7，全部通過後用白話告訴我怎麼用。改我的 hook 設定之前先問我。不要碰這個資料夾以外的檔案。</code></pre><button class="copy" data-for="c-install" type="button">複製</button></div>
+    <p><b>整句照貼就好，一個字都不用改。</b></p>
+    <p>接下來會發生的事：它先檢查 Python，然後下載程式、讀施工圖、把 <code>aiq.py</code> 放進你的資料夾、跑七項驗收。中間如果它問你「可不可以執行這個指令」，按允許。整個過程大約十分鐘。</p>
+    <div class="note">如果它說沒有 Python 或版本太舊：它會用白話教你怎麼裝。照做完，跟它說「裝好了，繼續」。</div>
+  </div>
+
+  <div class="card step">
+    <label class="chk"><input type="checkbox" data-step="s3"><b>第 3 步：看到什麼算成功</b></label>
+    <p>三個徵象同時出現就是裝好了：</p>
+    <ol>
+      <li>它回報 <b>T1 到 T7 全部通過</b></li>
+      <li>資料夾裡多了 <code>aiq.py</code> 和一個 <code>.aiq</code> 資料夾（Mac 的 Finder 預設看不到點開頭的資料夾，按 Cmd+Shift+. 就會顯示）</li>
+      <li>它問你<b>要不要接 hook</b></li>
+    </ol>
+    <p>它的回報大概長這樣：</p>
+    <pre class="out">建了什麼：aiq.py 放在你的專案資料夾，資料都在 .aiq 裡。以後在這個資料夾的對話裡說「把某件事排進佇列，只准改哪些檔」「跑佇列」「現在跑到哪」就好。
+
+驗收結果：T1 通過、T2 通過、T3 通過、T4 通過、T5 通過、T6 通過、T7 通過。
+
+做不到的：暫存區寫入、整波盤點、另一引擎審查、儀表板、多台電腦。
+hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」接上？改之前我會先備份。</pre>
+    <p class="muted">想看它真的動一次？回它「跑 T8」。那會真的派一件小任務給引擎做（在資料夾裡建一個 hello.txt），會用掉一點點額度。</p>
+  </div>
+
+  <div class="card step">
+    <label class="chk"><input type="checkbox" data-step="s4"><b>第 4 步：接 hook，讓做完的結果自動出現在下一句對話</b></label>
+    <p>它問「要不要接 hook」的時候，回它這句：</p>
+    <div class="cmd"><pre><code id="c-hook">好，先備份再改</code></pre><button class="copy" data-for="c-hook" type="button">複製</button></div>
+    <p>它會先把要加的內容印給你看，備份原本的設定檔，然後改 Claude Code 的 <code>settings.json</code> 或 Codex 的 <code>hooks.json</code>。</p>
+    <p class="muted">做完會看到：之後你在同一個資料夾開的任何 Claude Code 或 Codex 對話，每說一句話，還沒讀過的佇列結果就會自己出現在 AI 的脈絡裡，它會主動轉述給你。</p>
+    <details>
+      <summary>想自己看它會加什麼？展開</summary>
+      <ul style="margin-top:12px">
+        <li><b>Claude Code</b>：在 <code>~/.claude/settings.json</code> 的 <code>hooks.UserPromptSubmit</code> 加一個 command hook，指令是 <code>python &lt;aiq.py 的絕對路徑&gt; hook</code>，timeout 10 秒。已經有其他 hook 就附加在後面，不會覆蓋。改之前先把原檔複製一份 <code>settings.json.bak-&lt;日期&gt;</code>。</li>
+        <li><b>Codex</b>：在 <code>~/.codex/hooks.json</code> 的 <code>UserPromptSubmit</code> 加同樣的指令。</li>
+        <li>這個 <code>hook</code> 指令永遠正常結束、任何錯誤都吞掉：資料庫壞了、檔案不在、權限不對，都安靜退出，絕對不會弄壞你的對話。</li>
+        <li>Windows 上 <code>python</code> 這個名字有時是一層殼，不是真正跑程式的那個；hook 裡寫 Python 的完整路徑比較穩，AI 會處理。</li>
+      </ul>
+    </details>
+  </div>
+</div></section>
+
+<section id="use"><div class="wrap">
+  <h2>平常怎麼用：三句人話</h2>
+  <p>裝好之後，在同一個資料夾的對話裡就講人話，不用記指令。三句：</p>
+  <div class="cmd"><pre><code id="c-say1">把〈某件事〉排進佇列，只准改〈哪些檔〉</code></pre><button class="copy" data-for="c-say1" type="button">複製</button></div>
+  <p class="muted">例如：「把 README 的安裝段改寫成小白步驟排進佇列，只准改 README.md」。AI 會幫你登記，順便把「只准改哪些檔」寫進宣告。</p>
+  <div class="cmd"><pre><code id="c-say2">跑佇列</code></pre><button class="copy" data-for="c-say2" type="button">複製</button></div>
+  <p class="muted">它會搶一件交給引擎做。想一口氣做到佇列空為止，就說「跑佇列，做到空為止」。</p>
+  <div class="cmd"><pre><code id="c-say3">現在跑到哪</code></pre><button class="copy" data-for="c-say3" type="button">複製</button></div>
+  <p class="muted">它會列出每一件的狀態：排隊中、進行中、完成、失敗、等決定。</p>
+  <p>結果會自己出現在下一句對話裡（第 4 步接了 hook 才會）。沒接 hook 也能用，只是要自己問「現在跑到哪」。</p>
+
+  <h3>兩個進階</h3>
+  <p><b>任務要跑指令或測試時</b>：預設只放行「改專案內的檔案」，引擎連跑一個測試都會被擋。這種任務叫 AI 用 <code>--allow-all</code> 跑，那會跳過引擎的所有權限確認，只在你信得過這件任務時用。</p>
+  <div class="cmd"><pre><code id="c-allow">這件任務需要跑指令或測試，跑佇列時加 --allow-all</code></pre><button class="copy" data-for="c-allow" type="button">複製</button></div>
+  <p><b>想指定模型時</b>：不指定就用各 CLI 自己的預設模型。要指定就叫 AI 用 <code>--model</code>。</p>
+  <div class="cmd"><pre><code id="c-model">跑佇列時用 --model 指定〈模型名稱〉</code></pre><button class="copy" data-for="c-model" type="button">複製</button></div>
+</div></section>
+
+<section id="share"><div class="wrap">
+  <h2>兩個 AI 怎麼共用</h2>
+  <p><b>開同一個資料夾，就是同一個佇列。</b>Claude Code 登記的任務 Codex 看得到，反過來也一樣，因為兩邊讀的是資料夾裡同一個 <code>.aiq</code>。登記時沒指定要誰做，跑的時候就看這台電腦裝了哪個引擎，兩個都有就交替使用。</p>
+  <p><b>一邊額度快用完</b>：換另一邊開同一個資料夾，說「跑佇列」，它就接著做剩下的。做到一半被中斷的任務，下一次會從上次記錄的進度接下去，不會從頭來。</p>
+  <div class="cmd"><pre><code id="c-share">跑佇列</code></pre><button class="copy" data-for="c-share" type="button">複製</button></div>
+  <p><b>兩件任務要改同一份檔案</b>：登記第二件時會被擋下來，AI 會告訴你跟哪一件衝突。你只要說「這件等那件做完再做」，它就會加上先後順序，兩件都能進佇列。</p>
+</div></section>
+
+<section id="fail"><div class="wrap">
+  <h2>卡住怎麼辦</h2>
+  <p>五種最常見的卡法。每一種都附一句可以直接貼給 AI 的話。</p>
+
+  <div class="card">
+    <h3><span class="tag bad">卡住</span>它說找不到 Python，或版本太舊</h3>
+    <p class="muted">電腦上沒有 Python 3.10 以上。不是你的錯，叫它教你裝。</p>
+    <div class="cmd"><pre><code id="c-fix-py">請檢查這台電腦有沒有 Python 3.10 以上，沒有就用白話一步一步教我裝；裝好之後再把 aiq.py 的驗收 T1 到 T7 跑一次給我看。</code></pre><button class="copy" data-for="c-fix-py" type="button">複製</button></div>
+  </div>
+
+  <div class="card">
+    <h3><span class="tag bad">卡住</span>它說「這台電腦沒有 claude 也沒有 codex」</h3>
+    <p class="muted">引擎沒裝，或裝了但系統的 PATH 找不到它。</p>
+    <div class="cmd"><pre><code id="c-fix-cli">請確認這台電腦上 claude 和 codex 這兩個指令找不找得到（PATH 裡有沒有）。找不到的話，用白話告訴我是沒裝還是路徑沒設，以及要怎麼修。</code></pre><button class="copy" data-for="c-fix-cli" type="button">複製</button></div>
+  </div>
+
+  <div class="card">
+    <h3><span class="tag warn">等決定</span>任務變成 needs_decision</h3>
+    <p class="muted">三種常見原因：引擎結束但沒寫結果檔；改到宣告範圍外的檔案；Codex 說設定檔裡的模型需要新版 CLI 而秒退。真正的原因寫在 <code>.aiq/tasks/&lt;任務id&gt;/engine.log</code>，叫 AI 去讀。</p>
+    <div class="cmd"><pre><code id="c-fix-decision">有任務變成 needs_decision。請讀 .aiq/tasks/那件任務的id/engine.log，用白話告訴我原因。如果是 Codex 說模型需要新版 CLI，就用 --model 指定一個目前能跑的模型，把那件任務 requeue 之後再跑一次。</code></pre><button class="copy" data-for="c-fix-decision" type="button">複製</button></div>
+  </div>
+
+  <div class="card">
+    <h3><span class="tag warn">沒保護</span>它說這個資料夾不是 git repo，沒有越界檢查</h3>
+    <p class="muted">「引擎有沒有改到不該改的檔」這層檢查靠 git。不是 git repo 就只剩 prompt 裡的範圍宣告，還是能用，只是少一層保護。</p>
+    <div class="cmd"><pre><code id="c-fix-git">請確認這個專案資料夾是不是 git repo。不是的話先 git init，並把 .aiq/ 加進 .gitignore，這樣越界改動的檢查才會生效。</code></pre><button class="copy" data-for="c-fix-git" type="button">複製</button></div>
+  </div>
+
+  <div class="card">
+    <h3><span class="tag warn">順序</span>跑佇列做的不是我剛排的那件</h3>
+    <p class="muted">佇列先進先出，會先做最早登記、還沒做完的那件。前面測試留下來的先收掉，再跑你要的。</p>
+    <div class="cmd"><pre><code id="c-fix-fifo">先列出佇列裡所有還沒做完的任務。前面測試留下來、我不需要的，幫我標成完成或失敗收掉，剩下我真的要做的再跑。</code></pre><button class="copy" data-for="c-fix-fifo" type="button">複製</button></div>
+  </div>
+</div></section>
+
+<section id="remove"><div class="wrap">
+  <h2>之後想移除</h2>
+  <p>一樣在那個資料夾的對話裡跟 AI 說一句：</p>
+  <div class="cmd"><pre><code id="c-remove">請幫我移除佇列：先備份，然後刪掉這個資料夾裡的 aiq.py 和 .aiq 資料夾，再把 Claude Code 的 settings.json（或 Codex 的 hooks.json）裡呼叫 aiq.py hook 的那一段拿掉。改設定檔之前先備份一份。</code></pre><button class="copy" data-for="c-remove" type="button">複製</button></div>
+  <p class="muted">沒接過 hook 的人，它只會刪那兩樣東西。你專案裡其他檔案不會被動到。</p>
+</div></section>
+
+<section id="more"><div class="wrap">
+  <h2>這不是完整版</h2>
+  <p>這頁裝的是最小版：一個檔案，兩成的效果，夠一個人在同一台電腦上讓兩個 AI 不互踩。它是怎麼設計的、完整版多了什麼、踩過哪些雷，都寫在 <a href="https://github.com/Nouischen/one-folder-two-agents">GitHub 的設計筆記</a>裡。</p>
+  <ul>
+    <li><b>只想依序交班</b>（Claude 做完換 Codex，或同一個工具開新對話）：不需要佇列，用 <a href="https://github.com/Nouischen/cross-ai-progress-bridge">cross-ai-progress-bridge</a> 把進度存成專案裡一個 Markdown 就夠，比這頁的東西更輕。</li>
+    <li><b>想在手機上開新對話、卻落在自己電腦上</b>：那是另一個小工具，<a href="https://claude-code-phone-gateway.pages.dev">claude-code-phone-gateway.pages.dev</a>。</li>
+  </ul>
+</div></section>
+
+<section id="links"><div class="wrap">
+  <h2>連結</h2>
+  <ul>
+    <li>程式碼、施工圖與設計筆記：<a href="https://github.com/Nouischen/one-folder-two-agents">github.com/Nouischen/one-folder-two-agents</a>（文字 CC BY 4.0、程式 MIT）</li>
+    <li>問題回報：<a href="https://github.com/Nouischen/one-folder-two-agents/issues">GitHub Issues</a>，Mac 上試過的人尤其歡迎</li>
+    <li>作者：陳昱傑（<a href="https://github.com/Nouischen">Nouischen</a>），2026 年 9 月</li>
+  </ul>
+</div></section>
+
+<footer><div class="wrap">
+  陳昱傑（Nouischen）｜2026-09｜這個頁面和工具都是個人專案，與 Anthropic、OpenAI 無關。Claude、Claude Code 為 Anthropic 商標；Codex 為 OpenAI 商標。
+</div></footer>
+<script>
+(function(){
+  // copy buttons
+  function fallbackCopy(text){
+    var ta=document.createElement('textarea');ta.value=text;ta.setAttribute('readonly','');
+    ta.style.position='fixed';ta.style.top='-1000px';document.body.appendChild(ta);ta.select();
+    var ok=false;try{ok=document.execCommand('copy');}catch(e){}
+    document.body.removeChild(ta);return ok;
+  }
+  document.querySelectorAll('button.copy').forEach(function(btn){
+    btn.addEventListener('click',function(){
+      var el=document.getElementById(btn.getAttribute('data-for'));
+      var text=el?el.textContent:'';
+      var done=function(){btn.textContent='已複製';btn.classList.add('ok');setTimeout(function(){btn.textContent='複製';btn.classList.remove('ok');},1800);};
+      if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,function(){if(fallbackCopy(text))done();});}
+      else if(fallbackCopy(text)){done();}
+    });
+  });
+  // checkboxes remembered per browser
+  var KEY='ofta-steps';var state={};
+  try{state=JSON.parse(localStorage.getItem(KEY)||'{}')||{};}catch(e){state={};}
+  function paint(){document.querySelectorAll('.card.step').forEach(function(card){var top=card.querySelector('.chk input');card.classList.toggle('done',!!(top&&top.checked));});}
+  document.querySelectorAll('input[type=checkbox][data-step]').forEach(function(cb){
+    var id=cb.getAttribute('data-step');
+    if(state[id])cb.checked=true;
+    cb.addEventListener('change',function(){state[id]=cb.checked;try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}paint();});
+  });
+  paint();
+})();
+</script>
+</body>
+</html>
