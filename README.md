@@ -27,7 +27,7 @@
 
 在你想用的專案資料夾裡開 Claude Code 或 Codex，貼這句話：
 
-> 請把 https://github.com/Nouischen/one-folder-two-agents 複製到一個暫存位置，讀它的 BUILD_SPEC.md，把 aiq.py 放進我現在這個專案資料夾，照 BUILD_SPEC.md 第 7 節跑驗收 T1 到 T7，全部通過後用白話告訴我怎麼用。改我的 hook 設定之前先問我。不要碰這個資料夾以外的檔案。
+> 請把 https://github.com/Nouischen/one-folder-two-agents 複製到一個暫存位置，讀它的 BUILD_SPEC.md，把 aiq.py 複製進我現在這個專案資料夾，照 BUILD_SPEC.md 第 7 節跑驗收 T1 到 T7，全部通過後用白話告訴我怎麼用。改我的 hook 設定之前先問我。不要碰這個資料夾以外的檔案。
 
 裝好之後，你只要在同一個資料夾的對話裡講人話：
 

@@ -177,10 +177,10 @@ ul{padding-left:22px}li{margin-bottom:6px}
 
   <div class="card step">
     <label class="chk"><input type="checkbox" data-step="s2"><b>第 2 步：把這句貼給它，按送出</b></label>
-    <div class="cmd"><pre><code id="c-install">請先檢查這台電腦有沒有 Python 3.10 以上，沒有就用白話告訴我怎麼裝，裝好再繼續。然後把 https://github.com/Nouischen/one-folder-two-agents 複製到一個暫存位置，讀它的 BUILD_SPEC.md，把 aiq.py 放進我現在這個專案資料夾，照 BUILD_SPEC.md 第 7 節跑驗收 T1 到 T7，全部通過後用白話告訴我怎麼用。改我的 hook 設定之前先問我。不要碰這個資料夾以外的檔案。</code></pre><button class="copy" data-for="c-install" type="button">複製</button></div>
+    <div class="cmd"><pre><code id="c-install">請先檢查這台電腦有沒有 Python 3.10 以上，沒有就用白話告訴我怎麼裝，裝好再繼續。然後把 https://github.com/Nouischen/one-folder-two-agents 複製到一個暫存位置，讀它的 BUILD_SPEC.md，把 aiq.py 複製進我現在這個專案資料夾，照 BUILD_SPEC.md 第 7 節跑驗收 T1 到 T7，全部通過後用白話告訴我怎麼用。改我的 hook 設定之前先問我。不要碰這個資料夾以外的檔案。</code></pre><button class="copy" data-for="c-install" type="button">複製</button></div>
     <p><b>整句照貼就好，一個字都不用改。</b></p>
     <p>接下來會發生的事：它先檢查 Python，然後下載程式、讀施工圖、把 <code>aiq.py</code> 放進你的資料夾、跑七項驗收。中間如果它問你「可不可以執行這個指令」，按允許。整個過程大約十分鐘。</p>
-    <div class="note">如果它說沒有 Python 或版本太舊：它會用白話教你怎麼裝。照做完，跟它說「裝好了，繼續」。</div>
+    <div class="note">如果它說沒有 Python 或版本太舊：它會用白話教你怎麼裝。照做完，跟它說「裝好了，繼續」。想自己先確認：Windows 打開「命令提示字元」輸入 python --version，跳出微軟商店的視窗就代表還沒裝，到 python.org 下載安裝就好。</div>
   </div>
 
   <div class="card step">

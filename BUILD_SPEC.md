@@ -157,6 +157,7 @@ python aiq.py requeue ID              needs_decision 或 failed 改回 queued
 
 - 先用 `shutil.which("claude")` 與 `shutil.which("codex")` 確認裝了哪個。Windows 上 `claude` 可能是 `claude.cmd`，`which` 會處理。
 - 子行程一律 `stdin=subprocess.DEVNULL`。互動式 CLI 沒關 stdin 會掛住。
+- `result.md` 與 `engine.log` 的內容是引擎自由寫的，還會套用使用者自己的全域規則（例如 CLAUDE.md、AGENTS.md 要求的回報格式）。aiq.py 只保證「有沒有這個檔」，不保證格式；要給別的程式解析，自己另外加規範。
 - 不要把 prompt 放在命令列以外的地方傳（例如用 stdin 餵），兩個 CLI 的 `-p` 與 `exec` 都收命令列參數。完整 prompt 每次 run 都先寫進 `.aiq/tasks/<id>/prompt.md`；prompt 太長（超過 8000 字）時命令列只放一行「請先讀 <路徑> 再開始」。
 - **Windows 的 `.cmd` 殼會吃掉 prompt。** npm 裝的 `claude.cmd`、`codex.cmd` 中間隔了一層 cmd.exe，參數會在第一個換行被截斷、`%VAR%` 會被展開（實測：多行 prompt 只剩第一行）。所以 `shutil.which` 找到的是 `.cmd`／`.bat` 時，命令列一律只放那一行純 ASCII 的「請先讀 prompt.md」，不放全文。
 - **從 Claude Code 對話裡啟動時要剝掉巢狀標記。** 對話環境裡有 `CLAUDECODE`、`CLAUDE_PID` 與一堆 `CLAUDE_CODE_*`（session id、messaging socket 等），子 `claude` 繼承到會被當成巢狀啟動而拒跑或接錯 session。子行程環境除了第 3 節說的金鑰以外，還要刪掉 `CLAUDECODE`、`CLAUDE_PID` 與所有 `CLAUDE_CODE_` 開頭的變數；只有訂閱登入用的 `CLAUDE_CODE_OAUTH_TOKEN` 保留。`CLAUDE_CODE_USE_BEDROCK`／`_VERTEX` 也順便被這條剝掉，正好。
@@ -191,7 +192,7 @@ Codex：在 `~/.codex/hooks.json` 的 `UserPromptSubmit` 加同樣的指令。
 | T4 | `claim --lease-seconds 1`，等 2 秒，再 `claim` | 第二次搶得到，`attempt` 從 1 變 2 |
 | T5 | 手動 `done` 一件，跑 `hook` 兩次 | 第一次印出結果，第二次什麼都不印，exit 都是 0 |
 | T6 | 環境變數先設 `ANTHROPIC_API_KEY=x`，跑 `run --dry-run` | 輸出 `stripped: true` |
-| T7 | 把 `.aiq/tasks.db` 改成一個壞檔（例如寫入亂碼），跑 `hook` | 沒有輸出、沒有 traceback、exit 0；測完把壞檔刪掉 |
+| T7 | 先把 `.aiq/tasks.db` 備份一份，再把它改成壞檔（例如寫入亂碼），跑 `hook` | 沒有輸出、沒有 traceback、exit 0；測完用備份還原，不要直接刪掉（裡面可能已經有真實任務） |
 | T8 | 真跑一次（要先問使用者同意，會用一次額度）：`add "建立 hello.txt，內容一行 hi" --write hello.txt --engine claude`（或 codex），然後 `run` | `hello.txt` 存在且內容正確、任務 `done`、`hook` 印得出結果 |
 
 T1 到 T7 不花額度，自己跑完貼結果。T8 要使用者同意。
