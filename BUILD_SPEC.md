@@ -173,7 +173,7 @@ python aiq.py run --worker 我
 
 ## 6. 把 hook 接上對話（唯一會改到專案外的步驟）
 
-先把要加的內容印給使用者看，問一次「要不要我幫你加」，同意才改。
+先把要加的內容印給使用者看，問一次「要不要我幫你加」，同意才改。當下沒有人能回答（無人值守、自動化流程）就只印出建議片段、標明「尚未套用，等你確認」，停在這一步，不要自己猜他會同意。
 
 Claude Code：在 `~/.claude/settings.json` 的 `hooks.UserPromptSubmit` 加一個 command hook，指令是 `python <aiq.py 的絕對路徑> hook`，timeout 10 秒。已有其他 hook 就附加，不要覆蓋。改之前把原檔複製一份 `settings.json.bak-<日期>`。
 
@@ -195,6 +195,11 @@ Codex：在 `~/.codex/hooks.json` 的 `UserPromptSubmit` 加同樣的指令。
 | T8 | 真跑一次（要先問使用者同意，會用一次額度）：`add "建立 hello.txt，內容一行 hi" --write hello.txt --engine claude`（或 codex），然後 `run` | `hello.txt` 存在且內容正確、任務 `done`、`hook` 印得出結果 |
 
 T1 到 T7 不花額度，自己跑完貼結果。T8 要使用者同意。
+
+兩個容易踩的地方：
+
+- `claim` 是先進先出。T8 開始前先用 `status` 確認佇列裡沒有其他 `queued` 的任務（前面測試留下的先 `done` 或 `fail` 掉），不然 `run` 會先去做更早登記的那件，結果對不起來。
+- 越界改動檢查只在專案是 git repo 時有作用。專案資料夾不是 git repo，T8 這類真跑就完全沒有「引擎有沒有亂改別的檔」這層保護，純靠 prompt 裡的範圍宣告；回報時要講清楚。
 
 ## 8. 回報格式
 

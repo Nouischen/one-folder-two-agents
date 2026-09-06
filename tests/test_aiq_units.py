@@ -45,6 +45,13 @@ class ArgvAndPromptUnitTests(unittest.TestCase):
         self.assertFalse(aiq.overlaps("src/a", "src/ab"))
         self.assertFalse(aiq.overlaps("docs", "src"))
 
+    def test_no_engine_installed_returns_none(self):
+        nothing = {"claude": None, "codex": None}
+        self.assertIsNone(aiq.pick_engine(None, {"engine": "auto"}, nothing))
+        self.assertIsNone(aiq.pick_engine(None, {"engine": "claude"}, nothing))
+        self.assertIsNone(aiq.pick_engine(None, {"engine": "codex"}, {"claude": "claude", "codex": None}))
+        self.assertEqual(aiq.pick_engine(None, {"engine": "claude"}, {"claude": "claude", "codex": None}), "claude")
+
     def test_env_strip_rules(self):
         self.assertTrue(aiq.is_stripped("ANTHROPIC_API_KEY"))
         self.assertTrue(aiq.is_stripped("CLAUDECODE"))
