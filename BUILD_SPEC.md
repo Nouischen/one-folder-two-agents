@@ -46,7 +46,9 @@ aiq.py          單一程式檔，所有指令都在這裡
    使用者不會用指令，他講的是意思，不是關鍵字。凡是他表達「把某件事排進去／排隊做／等一下做」「去跑／開始做／跑佇列」「做到哪了／進度」這類意思，就對到下面的指令，不要要求他照字面講。他只負責說要做什麼，該動哪些檔由你判斷：
    - 登記：先自己看他的要求與這個資料夾的內容，判斷這件事需要動哪些檔，再 python aiq.py add "標題" --prompt "要做什麼與驗收條件" --write <你判斷出來的檔案或資料夾>...
      範圍是你的工作，不是他的。登記完用一句話告訴他「排進去了，會改的是這幾個檔」，不要反過來叫他指定。只有真的判斷不出來（同名檔案很多、他的說法可以指到兩個完全不同的地方）才問一句。他主動指定時以他的為準。
-   - 執行：python aiq.py run --worker <你的名字>（要連做加 --loop；任務要跑指令或測試加 --allow-all；他指定模型加 --model）
+   - 執行：python aiq.py run --worker <你的名字> --engine <你自己是 claude 還是 codex>
+     加 --engine 是因為：他換到你這邊的對話，通常就是要用你的額度。任務要跑指令或測試加 --allow-all。
+   - 他一句話裡同時有交辦和「你做」的意思（例如「這個你排進去做」「順便跑一下」），就 add 完直接 run，不要停下來等他再說一次。
    - 狀態：python aiq.py status
    - 收掉／重排：python aiq.py done|fail|requeue <id>
    做完的結果會由 hook 注入下一句對話；沒接 hook 就跑 python aiq.py hook 讀。細節看 python aiq.py --help。
@@ -118,13 +120,13 @@ python aiq.py claim --worker 名字 [--lease-seconds 900]
 ### run：搶一件並交給引擎做
 
 ```
-python aiq.py run --worker 名字 [--timeout-seconds 3600] [--dry-run] [--allow-all] [--model 名稱] [--loop]
+python aiq.py run --worker 名字 [--engine claude|codex] [--timeout-seconds 3600] [--dry-run] [--allow-all] [--model 名稱] [--loop]
 ```
 
 `--model` 不給就用各 CLI 自己的預設模型（使用者設定檔裡的那個）。給了就傳給 `claude --model` 或 `codex -m`。使用者的 Codex 設定檔若指定了目前 CLI 版本跑不了的模型，引擎會秒退、任務進 `needs_decision`，`engine.log` 裡會有原因；這時用 `--model` 指定一個能跑的。
 
 1. 呼叫 claim，租約長度＝`timeout-seconds + 60`（要蓋過整段執行，做到一半才不會被別的 worker 當過期搶走）。沒有可搶的就結束，exit 0。
-2. 決定引擎：任務寫明 `claude` 或 `codex` 就用它。`auto` 的話讀 `.aiq/capacity.json`（格式 `{"claude": 0.7, "codex": 0.3}`，數字是使用者估的剩餘比例），選數字大的；檔案不存在就交替使用（看上一件 done 的任務的 `engine_used`）。只在這台電腦找得到的引擎裡選（用 `shutil.which`）。兩個都找不到：任務改回 `queued`，印「這台電腦沒有 claude 也沒有 codex」，exit 0。
+2. 決定引擎：任務寫明 `claude` 或 `codex` 就用它。`auto` 的話先看這一輪的 `--engine`（換引擎接手時，接手的那一邊會傳自己），再讀 `.aiq/capacity.json`（格式 `{"claude": 0.7, "codex": 0.3}`，數字是使用者估的剩餘比例），選數字大的；檔案不存在就交替使用（看上一件 done 的任務的 `engine_used`）。只在這台電腦找得到的引擎裡選（用 `shutil.which`）。兩個都找不到：任務改回 `queued`，印「這台電腦沒有 claude 也沒有 codex」，exit 0。
 3. 組 prompt，固定模板：
 
    ```

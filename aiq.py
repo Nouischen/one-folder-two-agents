@@ -344,13 +344,20 @@ def find_engines() -> dict[str, str | None]:
     return {name: shutil.which(name) for name in ENGINES}
 
 
-def pick_engine(con, task: sqlite3.Row, found: dict[str, str | None]) -> str | None:
-    """任務指定的就用它；auto 看 capacity.json，沒有就跟上一件 done 的交替。只在找得到的裡面選。"""
+def pick_engine(con, task: sqlite3.Row, found: dict[str, str | None],
+                prefer: str | None = None) -> str | None:
+    """任務指定的就用它；auto 看 prefer、再看 capacity.json，都沒有就跟上一件 done 的交替。
+
+    prefer 來自 ``run --engine``：使用者換到另一個引擎的對話通常就是為了用那邊的額度，
+    所以那一輪的 auto 任務優先跑在它身上。任務自己寫死的引擎仍然贏過 prefer。
+    """
     avail = [e for e in ENGINES if found[e]]
     if task["engine"] in ENGINES:
         return task["engine"] if found[task["engine"]] else None
     if not avail:
         return None
+    if prefer in avail:
+        return prefer
     if CAPACITY_PATH.exists():
         try:
             cap = json.loads(CAPACITY_PATH.read_text(encoding="utf-8"))
@@ -511,7 +518,7 @@ def run_once(a) -> str:
         return "empty"
     task_id = row["id"]
     found = find_engines()
-    engine = pick_engine(con, row, found)
+    engine = pick_engine(con, row, found, a.engine)
     if engine is None:
         requeue_task(con, task_id)
         msg = ("這台電腦沒有 claude 也沒有 codex" if not any(found.values())
@@ -691,6 +698,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="引擎跳過所有權限確認（claude --dangerously-skip-permissions／codex 全開）；"
                          "預設只自動接受專案內的檔案編修")
     sp.add_argument("--model", help="指定模型名稱（claude --model／codex -m）；不給就用 CLI 自己的預設")
+    sp.add_argument("--engine", choices=ENGINES,
+                    help="這一輪的 auto 任務優先跑在這個引擎上（換引擎接手時用，任務自己指定的仍然優先）")
     add_cmd("hook", cmd_hook, "把未讀結果印出來給對話（永遠 exit 0）")
     add_cmd("status", cmd_status, "各狀態計數＋每件一行")
     for name in ("done", "fail"):

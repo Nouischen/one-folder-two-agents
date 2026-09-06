@@ -52,6 +52,21 @@ class ArgvAndPromptUnitTests(unittest.TestCase):
         self.assertIsNone(aiq.pick_engine(None, {"engine": "codex"}, {"claude": "claude", "codex": None}))
         self.assertEqual(aiq.pick_engine(None, {"engine": "claude"}, {"claude": "claude", "codex": None}), "claude")
 
+    def test_prefer_engine_only_overrides_auto_tasks(self):
+        both = {"claude": "claude", "codex": "codex"}
+        self.assertEqual(aiq.pick_engine(None, {"engine": "auto"}, both, "codex"), "codex")
+        self.assertEqual(aiq.pick_engine(None, {"engine": "claude"}, both, "codex"), "claude")
+        # 偏好的引擎這台電腦沒裝時，回到原本的選法（用假 con，因為那條路會查資料庫）
+        class _Con:
+            def execute(self, *a):
+                class _R:
+                    def fetchone(self_inner):
+                        return None
+                return _R()
+        self.assertEqual(
+            aiq.pick_engine(_Con(), {"engine": "auto"}, {"claude": "claude", "codex": None}, "codex"),
+            "claude")
+
     def test_env_strip_rules(self):
         self.assertTrue(aiq.is_stripped("ANTHROPIC_API_KEY"))
         self.assertTrue(aiq.is_stripped("CLAUDECODE"))

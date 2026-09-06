@@ -220,28 +220,42 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
 </div></section>
 
 <section id="use"><div class="wrap">
-  <h2>平常怎麼用：三句人話</h2>
-  <p>裝好之後，在同一個資料夾的對話裡就講人話，不用記指令。下面三句是「意思」不是暗號，你用自己的話講，AI 會對到指令；安裝時它會在資料夾放一份給 AI 看的使用說明（AIQ.md），之後開新對話它也認得。三句：</p>
-  <div class="cmd"><pre><code id="c-say1">把〈某件事〉排進佇列</code></pre><button class="copy" data-for="c-say1" type="button">複製</button></div>
-  <p class="muted">例如：「把 README 的安裝段改寫成小白步驟，排進佇列」。<b>要動哪些檔不用你想</b>：AI 看完你的要求和資料夾內容自己判斷，登記完會告訴你一聲「會改的是這幾個檔」。你有特別在意的才補一句「只能動這個檔」，它以你的為準。</p>
-  <div class="cmd"><pre><code id="c-say2">跑佇列</code></pre><button class="copy" data-for="c-say2" type="button">複製</button></div>
-  <p class="muted">它會搶一件交給引擎做，做完就停。想再做下一件，就再說一次。</p>
-  <div class="cmd"><pre><code id="c-say3">現在跑到哪</code></pre><button class="copy" data-for="c-say3" type="button">複製</button></div>
-  <p class="muted">它會列出每一件的狀態：排隊中、進行中、完成、失敗、等決定。</p>
-  <p>結果會自己出現在下一句對話裡（第 4 步接了 hook 才會）。沒接 hook 也能用，只是要自己問「現在跑到哪」。</p>
+  <h2>平常怎麼用：你就正常講話</h2>
+  <p>裝好之後不用記指令，也不用背任何暗號。你在這個資料夾的對話裡正常交辦，AI 讀得到安裝時留下的使用說明，自己知道要走佇列。下面是三個真的會用到的時刻，句子照抄或用自己的話講都行。</p>
+
+  <div class="card">
+    <h3>一、交辦一件要花點時間的事</h3>
+    <p class="muted">最常見。你講你要什麼，加一句「這個你排進去做」。它會登記、然後直接開始做，不會停下來等你再說一次。</p>
+    <div class="cmd"><pre><code id="c-say1">README 的安裝那段寫得太術語了，幫我改白話一點，這個你排進去做</code></pre><button class="copy" data-for="c-say1" type="button">複製</button></div>
+    <p class="muted"><b>要動哪些檔不用你想。</b>AI 看完你的要求和資料夾內容自己判斷，登記完會告訴你一聲「會改的是這幾個檔」。你有特別在意的才補一句「只能動這個檔」，它以你的為準。</p>
+  </div>
+
+  <div class="card">
+    <h3>二、額度快用完，換另一邊接手</h3>
+    <p class="muted">這是這整個東西最有感的時刻。Claude 快沒額度時，你先把還沒做的交辦下去，然後在同一個資料夾開 Codex，講這句：</p>
+    <div class="cmd"><pre><code id="c-say2">我 Claude 額度快用完了，這邊還有什麼沒做完的嗎？有的話你接著做</code></pre><button class="copy" data-for="c-say2" type="button">複製</button></div>
+    <p class="muted">它會自己看到佇列裡還有什麼、用<b>它自己的額度</b>接著做，不用你重講一次背景。做到一半被中斷的，會從上次記錄的進度接下去，不從頭來。反過來從 Codex 換回 Claude 也一樣。</p>
+  </div>
+
+  <div class="card">
+    <h3>三、回頭看還有什麼沒做完</h3>
+    <p class="muted">隔天或換個對話回來，直接問就好。</p>
+    <div class="cmd"><pre><code id="c-say3">還有什麼沒做完的？</code></pre><button class="copy" data-for="c-say3" type="button">複製</button></div>
+    <p class="muted">它會列出每一件的狀態：排隊中、進行中、完成、失敗、等你決定。接了 hook 的話，做完的結果會自己出現在你下一句對話裡，連問都不用問。</p>
+  </div>
 
   <h3>兩個進階</h3>
   <p><b>任務要跑指令或測試時</b>：預設只放行「改專案內的檔案」，引擎連跑一個測試都會被擋。這種任務叫 AI 用 <code>--allow-all</code> 跑，那會跳過引擎的所有權限確認，只在你信得過這件任務時用。</p>
-  <div class="cmd"><pre><code id="c-allow">這件任務需要跑指令或測試，跑佇列時加 --allow-all</code></pre><button class="copy" data-for="c-allow" type="button">複製</button></div>
+  <div class="cmd"><pre><code id="c-allow">這件任務需要跑指令或測試，跑的時候加 --allow-all</code></pre><button class="copy" data-for="c-allow" type="button">複製</button></div>
   <p><b>想指定模型時</b>：不指定就用各 CLI 自己的預設模型。要指定就叫 AI 用 <code>--model</code>。</p>
-  <div class="cmd"><pre><code id="c-model">跑佇列時用 --model 指定〈模型名稱〉</code></pre><button class="copy" data-for="c-model" type="button">複製</button></div>
+  <div class="cmd"><pre><code id="c-model">跑的時候用 --model 指定〈模型名稱〉</code></pre><button class="copy" data-for="c-model" type="button">複製</button></div>
 </div></section>
 
 <section id="share"><div class="wrap">
   <h2>兩個 AI 怎麼共用</h2>
-  <p><b>開同一個資料夾，就是同一個佇列。</b>Claude Code 登記的任務 Codex 看得到，反過來也一樣，因為兩邊讀的是資料夾裡同一個 <code>.aiq</code>。登記時沒指定要誰做，跑的時候就看這台電腦裝了哪個引擎，兩個都有就交替使用。</p>
-  <p><b>一邊額度快用完</b>：換另一邊開同一個資料夾，說「跑佇列」，它就接著做剩下的。做到一半被中斷的任務，下一次會從上次記錄的進度接下去，不會從頭來。</p>
-  <div class="cmd"><pre><code id="c-share">跑佇列</code></pre><button class="copy" data-for="c-share" type="button">複製</button></div>
+  <p><b>開同一個資料夾，就是同一個佇列。</b>Claude Code 登記的任務 Codex 看得到，反過來也一樣，因為兩邊讀的是資料夾裡同一個 <code>.aiq</code>。你累積的檔案、參考資料、做過的紀錄都在同一處，不會分家。</p>
+  <p><b>換手就是換額度。</b>接手的那一邊會用自己的額度去跑沒指定引擎的任務，所以你換過去省的是真的。</p>
+  <p><b>兩個可以同時做事。</b>你在 Claude 那邊叫它做一件，同時在 Codex 那邊叫它做另一件，兩邊會各拿一件、同時進行。安全來自登記那一關：同時在排隊或執行中的任務，會動到的檔案一定不重疊，所以碰不到同一個檔。</p>
   <p><b>兩件任務要改同一份檔案</b>：登記第二件時會被擋下來，AI 會告訴你跟哪一件衝突。你只要說「這件等那件做完再做」，它就會加上先後順序，兩件都能進佇列。</p>
 </div></section>
 
