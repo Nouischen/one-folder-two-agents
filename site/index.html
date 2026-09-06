@@ -212,9 +212,10 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
       <summary>想自己看它會加什麼？展開</summary>
       <ul style="margin-top:12px">
         <li><b>Claude Code</b>：在 <code>~/.claude/settings.json</code> 的 <code>hooks.UserPromptSubmit</code> 加一個 command hook，指令是 <code>python &lt;aiq.py 的絕對路徑&gt; hook</code>，timeout 10 秒。已經有其他 hook 就附加在後面，不會覆蓋。改之前先把原檔複製一份 <code>settings.json.bak-&lt;日期&gt;</code>。</li>
-        <li><b>Codex</b>：在 <code>~/.codex/hooks.json</code> 的 <code>UserPromptSubmit</code> 加同樣的指令。</li>
+        <li><b>Codex</b>：在 <code>~/.codex/hooks.json</code> 的 <code>UserPromptSubmit</code> 加同樣的指令。<b>加完要回到 Codex 裡打 <code>/hooks</code>，把它檢視並信任一次才會生效</b>，之後 hook 內容有改要再信任一次。少了這步，Codex 那邊會安靜地完全沒反應。</li>
         <li>這個 <code>hook</code> 指令永遠正常結束、任何錯誤都吞掉：資料庫壞了、檔案不在、權限不對，都安靜退出，絕對不會弄壞你的對話。</li>
-        <li>Windows 上 <code>python</code> 這個名字有時是一層殼，不是真正跑程式的那個；hook 裡寫 Python 的完整路徑比較穩，AI 會處理。</li>
+        <li>Windows 上 <code>python</code> 這個名字有時是一層殼，不是真正跑程式的那個；hook 裡寫 Python 的完整路徑比較穩，AI 會處理。macOS 上沒有 <code>python</code> 這個指令，要用 <code>python3</code> 或完整路徑。</li>
+      <li>這個 hook 掛上去是整台電腦生效的，但程式只會在你人就在這個專案資料夾時才出聲；在別的專案講話不會被灌進這裡的結果。</li>
       </ul>
     </details>
   </div>
@@ -223,6 +224,11 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
 <section id="use"><div class="wrap">
   <h2>平常怎麼用</h2>
   <p><b>先講清楚什麼時候用得到。</b>如果你從頭到尾只開一個 AI、一個對話，那你不需要這個東西，直接叫它做就好。它是為了「同一個資料夾會有第二個人動手」而存在的：另一個 AI、另一個對話，或是你等一下換過去的那一邊。</p>
+  <div class="card" style="border-left:4px solid var(--accent)">
+    <h3>先說清楚它擋得住什麼、擋不住什麼</h3>
+    <p class="muted"><b>它是禮讓規則，不是門鎖。</b>保護靠兩邊的 AI 自願先查清單。我實測過兩種結果都會發生：有一次 Codex 乖乖查了、停手不碰；另一次 Claude 直接把檔案改了、根本沒查。你直接叫它改檔，它就會改。</p>
+    <p class="muted">另外，資料夾不是 git repo，或那個檔本來就有還沒存檔的修改時，改錯檔案抓不到（新版會在結果裡明講「這次沒有做越界檢查」，但還是抓不到）。<b>它讓互踩變少，不讓互踩變成不可能。重要的東西請照樣 commit 或備份。</b></p>
+  </div>
   <p>裝好之後不用記指令，也不用背暗號。你正常交辦，AI 讀得到安裝時留下的說明，自己知道要走這份共用清單。三個真的會用到的時刻：</p>
 
   <div class="card">
@@ -238,7 +244,7 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
     <h3>二、額度快用完，換另一邊接手</h3>
     <p class="muted">Claude 快沒額度時，你先把還沒做的交辦下去，然後在同一個資料夾開 Codex，講這句：</p>
     <div class="cmd"><pre><code id="c-say2">我 Claude 額度快用完了，這邊還有什麼沒做完的嗎？有的話你接著做</code></pre><button class="copy" data-for="c-say2" type="button">複製</button></div>
-    <p class="muted">它會自己看到清單上還有什麼、用<b>它自己的額度</b>接著做，不用你重講一次背景。做到一半被中斷的，會從上次記錄的進度接下去，不從頭來。反過來從 Codex 換回 Claude 也一樣。這段我也實測過：Codex 收到這句話之後自己找到沒做完的那件、做完、記錄完成，全程一次額度。</p>
+    <p class="muted">它會自己看到清單上還有什麼、用<b>它自己的額度</b>接著做，不用你重講一次背景。交辦的內容存在清單裡，所以不用你重講一次背景。反過來從 Codex 換回 Claude 也一樣。（「從上次進度接下去」只有在你把工作交給背景執行時才有，對話裡直接做的那種被中斷就是重做。）這段我也實測過：Codex 收到這句話之後自己找到沒做完的那件、做完、記錄完成，全程一次額度。</p>
   </div>
 
   <div class="card">
@@ -259,7 +265,7 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
   <h2>兩個 AI 怎麼共用</h2>
   <p><b>開同一個資料夾，就是同一個待辦清單。</b>Claude Code 登記的任務 Codex 看得到，反過來也一樣，因為兩邊讀的是資料夾裡同一個 <code>.aiq</code>。你累積的檔案、參考資料、做過的紀錄都在同一處，不會分家。</p>
   <p><b>換手就是換額度。</b>接手的那一邊會用自己的額度去跑沒指定引擎的任務，所以你換過去省的是真的。</p>
-  <p><b>兩個可以同時做事。</b>你在 Claude 那邊叫它做一件，同時在 Codex 那邊叫它做另一件，兩邊會各拿一件、同時進行。安全來自登記那一關：同時在排隊或執行中的任務，會動到的檔案一定不重疊，所以碰不到同一個檔。</p>
+  <p><b>兩個可以同時做事。</b>你在 Claude 那邊叫它做一件，同時在 Codex 那邊叫它做另一件，兩邊會各拿一件、同時進行。安全來自登記那一關：兩邊都有登記時，同時在排隊或執行中的任務，宣告會動到的檔案不會重疊。前提是兩邊都有登記；你直接叫某一邊改檔，這一關就繞過去了。</p>
   <p><b>兩件任務要改同一份檔案</b>：登記第二件時會被擋下來，AI 會告訴你跟哪一件衝突。你只要說「這件等那件做完再做」，它就會加上先後順序，兩件都能進待辦清單。</p>
 </div></section>
 
@@ -301,7 +307,7 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
 <section id="remove"><div class="wrap">
   <h2>之後想移除</h2>
   <p>一樣在那個資料夾的對話裡跟 AI 說一句：</p>
-  <div class="cmd"><pre><code id="c-remove">請幫我移除這個待辦清單：先備份，然後刪掉這個資料夾裡的 aiq.py 和 .aiq 資料夾，再把 Claude Code 的 settings.json（或 Codex 的 hooks.json）裡呼叫 aiq.py hook 的那一段拿掉。改設定檔之前先備份一份。</code></pre><button class="copy" data-for="c-remove" type="button">複製</button></div>
+  <div class="cmd"><pre><code id="c-remove">請幫我移除這個待辦清單：先備份，然後刪掉這個資料夾裡的 aiq.py、AIQ.md 和 .aiq 資料夾，把 CLAUDE.md 與 AGENTS.md 裡那行「請先讀 AIQ.md」拿掉（這兩個檔如果只剩那一行就整個刪掉），再把 Claude Code 的 settings.json（或 Codex 的 hooks.json）裡呼叫 aiq.py hook 的那一段拿掉。改設定檔之前先備份一份。</code></pre><button class="copy" data-for="c-remove" type="button">複製</button></div>
   <p class="muted">沒接過 hook 的人，它只會刪那兩樣東西。你專案裡其他檔案不會被動到。</p>
 </div></section>
 

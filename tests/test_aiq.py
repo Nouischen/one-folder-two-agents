@@ -260,7 +260,10 @@ class AiqCase(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertIn("done", out)
         row = self.row(task_id)
-        self.assertEqual((row["status"], row["engine_used"], row["result"]), ("done", "claude", "fake done: write"))
+        self.assertEqual((row["status"], row["engine_used"]), ("done", "claude"))
+        self.assertTrue(row["result"].startswith("fake done: write"), row["result"])
+        # 不是 git repo 時要誠實說「這次沒有做越界檢查」，不能安靜地顯示 done
+        self.assertIn("沒有做越界檢查", row["result"])
         self.assertEqual((self.tmp / "hello.txt").read_text(encoding="utf-8"), "hi\n")
         self.assertTrue((self.tmp / ".aiq" / "tasks" / task_id / "prompt.md").exists())
         seen = (self.tmp / ".aiq" / "tasks" / task_id / "seen_args.txt").read_text(encoding="utf-8")

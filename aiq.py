@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hashlib
 import json
 import os
 import secrets
@@ -198,8 +199,13 @@ def norm_scope(raw: str) -> str:
 
 
 def overlaps(a: str, b: str) -> bool:
-    """同一路徑，或一方是另一方的上層資料夾。"""
-    pa, pb = a.split("/"), b.split("/")
+    """同一路徑，或一方是另一方的上層資料夾。
+
+    比對前先 casefold：Windows 與 macOS 的檔案系統預設不分大小寫，
+    `report.md` 與 `REPORT.MD` 是同一個檔。不這樣做的話，換個大小寫
+    重新登記就能繞過「同一個檔同一時間只有一個 writer」這條保證。
+    """
+    pa, pb = a.casefold().split("/"), b.casefold().split("/")
     n = min(len(pa), len(pb))
     return pa[:n] == pb[:n]
 
@@ -224,6 +230,20 @@ def cmd_add(a) -> int:
     writes = [norm_scope(p) for p in a.write]
     reads = [norm_scope(p) for p in a.read]
     deps = list(dict.fromkeys(a.depends_on))
+    # 檢查與寫入必須在同一個交易裡：兩個對話同時登記同一個檔時，
+    # 「先查再寫」中間的空檔會讓雙方都查到沒衝突、然後都寫進去。
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        rc = _add_locked(con, a, writes, reads, deps)
+        con.execute("COMMIT")
+    except BaseException:
+        if con.in_transaction:
+            con.execute("ROLLBACK")
+        raise
+    return rc
+
+
+def _add_locked(con, a, writes: list[str], reads: list[str], deps: list[str]) -> int:
     for dep in deps:
         if fetch(con, dep) is None:
             raise Usage(f"--depends-on {dep}：沒有這件任務")
@@ -240,9 +260,12 @@ def cmd_add(a) -> int:
     for t in con.execute("SELECT * FROM tasks WHERE status IN ('queued','running')").fetchall():
         if t["id"] in related:
             continue
-        for kind in ("write_scope", "read_scope"):
+        # 我的 write vs 對方的 write/read，以及我的 read vs 對方的 write。
+        # 只查前者的話，「先登記 writer 再登記 reader」會被放行，reader 讀到寫到一半的檔。
+        pairs = [(writes, "write_scope"), (writes, "read_scope"), (reads, "write_scope")]
+        for mine_list, kind in pairs:
             for theirs in json.loads(t[kind]):
-                for mine in writes:
+                for mine in mine_list:
                     if overlaps(mine, theirs):
                         conflicts.append({"id": t["id"], "status": t["status"], "kind": kind,
                                           "theirs": theirs, "mine": mine})
@@ -278,8 +301,12 @@ def recover_expired(con) -> list[str]:
     return ids
 
 
-def claim_one(con, worker: str, lease_seconds: int) -> sqlite3.Row | None:
-    """在 BEGIN IMMEDIATE 交易裡挑一件可做的，用條件 UPDATE 搶；更新到 0 列就重選。"""
+def claim_one(con, worker: str, lease_seconds: int, only_id: str | None = None) -> sqlite3.Row | None:
+    """在 BEGIN IMMEDIATE 交易裡挑一件可做的，用條件 UPDATE 搶；更新到 0 列就重選。
+
+    only_id 指定時只搶那一件：對話裡的 AI 要自己動手做之前，先用它把任務變成
+    running，另一邊才看得出來「這件有人在做」，不會兩邊同時做同一件。
+    """
     for _ in range(20):
         con.execute("BEGIN IMMEDIATE")
         try:
@@ -287,6 +314,8 @@ def claim_one(con, worker: str, lease_seconds: int) -> sqlite3.Row | None:
             pick = None
             for r in con.execute("SELECT id, depends_on FROM tasks WHERE status='queued' "
                                  "ORDER BY created_at, id").fetchall():
+                if only_id is not None and r["id"] != only_id:
+                    continue
                 if all(dep in done for dep in json.loads(r["depends_on"])):
                     pick = r["id"]
                     break
@@ -310,7 +339,7 @@ def claim_one(con, worker: str, lease_seconds: int) -> sqlite3.Row | None:
 def cmd_claim(a) -> int:
     con = open_db()
     recovered = recover_expired(con)
-    row = claim_one(con, a.worker, a.lease_seconds)
+    row = claim_one(con, a.worker, a.lease_seconds, a.id)
     claimed = task_dict(row) if row is not None else None
     if a.json:
         print(dumps({"claimed": claimed, "recovered": recovered}))
@@ -430,12 +459,37 @@ def git_status() -> set[str] | None:
     return paths
 
 
-def strays(before: set[str] | None, after: set[str] | None, write_scope: list[str]) -> list[str]:
-    """這次執行新出現的變動裡，不在 write_scope 也不是 .aiq/ 的檔案。"""
+def dirty_hashes(paths: set[str] | None) -> dict[str, str]:
+    """把「本來就有未存檔改動」的檔案內容雜湊起來。
+
+    只靠 git status 的路徑集合比對會有一個洞：本來就 dirty 的檔已經在 before 裡，
+    引擎再把它整份覆寫，after - before 是空的，於是越界完全抓不到、任務還顯示 done。
+    """
+    out: dict[str, str] = {}
+    for rel_path in sorted(paths or ()):
+        if rel_path.startswith(".aiq/"):
+            continue
+        try:
+            out[rel_path] = hashlib.sha256((ROOT / rel_path).read_bytes()).hexdigest()
+        except OSError:
+            out[rel_path] = "missing"
+    return out
+
+
+def strays(before: set[str] | None, after: set[str] | None, write_scope: list[str],
+           before_hashes: dict[str, str] | None = None) -> list[str]:
+    """這次執行動到、但不在 write_scope 也不是 .aiq/ 的檔案。"""
     if before is None or after is None:
         return []
-    return sorted(p for p in after - before
-                  if not p.startswith(".aiq/") and not any(overlaps(p, w) for w in write_scope))
+    def out_of_scope(p: str) -> bool:
+        return not p.startswith(".aiq/") and not any(overlaps(p, w) for w in write_scope)
+    bad = {p for p in after - before if out_of_scope(p)}
+    for rel_path, old_hash in (before_hashes or {}).items():
+        if not out_of_scope(rel_path):
+            continue
+        if dirty_hashes({rel_path}).get(rel_path) != old_hash:
+            bad.add(rel_path)
+    return sorted(bad)
 
 
 def kill_tree(proc: subprocess.Popen) -> None:
@@ -481,7 +535,7 @@ def peer_write_scopes(con, task_id: str, started_iso: str) -> list[str]:
 
 
 def finalize(con, row: sqlite3.Row, engine: str, rc: int, before: set[str] | None,
-             started_iso: str) -> tuple[str, str]:
+             started_iso: str, before_hashes: dict[str, str] | None = None) -> tuple[str, str]:
     """子行程結束後判定 done / needs_decision，並寫回資料庫。"""
     task_id = row["id"]
     tdir = task_dir(task_id)
@@ -493,10 +547,13 @@ def finalize(con, row: sqlite3.Row, engine: str, rc: int, before: set[str] | Non
         status = "needs_decision"
         result = f"引擎結束但沒有寫結果檔（exit code {rc}，輸出見 {rel(tdir / 'engine.log')}）"
     allowed = json.loads(row["write_scope"]) + peer_write_scopes(con, task_id, started_iso)
-    bad = strays(before, git_status(), allowed)
+    bad = strays(before, git_status(), allowed, before_hashes)
     if bad:
         status = "needs_decision"
         result += "\n\n越界改動：" + "、".join(bad) + "，請使用者檢查"
+    elif before is None:
+        result += ("\n\n（這個資料夾不是 git repo，這次沒有做越界檢查："
+                   "引擎有沒有改到範圍外的檔，程式無法判斷。）")
     cur = con.execute(
         "UPDATE tasks SET status=?, result=?, finished_at=?, delivered=0, engine_used=?, "
         "lease_owner=NULL, lease_until=NULL WHERE id=? AND status='running' AND lease_owner=?",
@@ -547,6 +604,10 @@ def run_once(a) -> str:
         result_path.unlink()  # 舊結果不算數，免得引擎秒退還被判 done
     log_path = tdir / "engine.log"
     before = git_status()
+    before_hashes = dirty_hashes(before)
+    if before is None:
+        say(a, "提醒：這個資料夾不是 git repo，做完不會檢查引擎有沒有改到範圍外的檔。"
+               "要這層保護，先在這個資料夾 git init。")
     started_iso = iso(utcnow())
     say(a, f"{task_id} 交給 {engine}（attempt {row['attempt']}），引擎輸出寫在 {rel(log_path)}")
     started = time.monotonic()
@@ -578,7 +639,7 @@ def run_once(a) -> str:
             say(a, f"中斷：{task_id} 已放回佇列")
             raise
     elapsed = round(time.monotonic() - started, 1)
-    status, result = finalize(con, row, engine, rc, before, started_iso)
+    status, result = finalize(con, row, engine, rc, before, started_iso, before_hashes)
     out(a, {"id": task_id, "status": status, "engine": engine, "rc": rc, "seconds": elapsed, "result": result},
         f"{task_id} → {status}（{engine}，rc={rc}，{elapsed}s）\n{result[:RESULT_PREVIEW]}")
     return status
@@ -597,6 +658,12 @@ def cmd_hook(a) -> int:
     """把未讀結果印出來給對話用。永遠 exit 0、任何錯誤都吞掉；不建立 .aiq、不建資料庫。"""
     try:
         if not DB_PATH.is_file():
+            return 0
+        # 只在對話的工作目錄就在這個專案裡時才出聲。hook 常常掛在使用者層設定
+        # （全機器生效），沒有這道判斷的話，你在別的專案講一句話，這裡的結果
+        # 就會被灌進那個對話並標成已送達，原本那個對話反而再也看不到。
+        here = Path.cwd().resolve()
+        if here != ROOT and ROOT not in here.parents:
             return 0
         con = sqlite3.connect(DB_PATH, timeout=5, isolation_level=None)
         con.row_factory = sqlite3.Row
@@ -648,8 +715,30 @@ def cmd_finish(a) -> int:
         raise Usage(f"沒有這件任務：{a.id}")
     status = "done" if a.cmd == "done" else "failed"
     con.execute("UPDATE tasks SET status=?, result=?, finished_at=?, delivered=0, lease_owner=NULL, "
-                "lease_until=NULL WHERE id=?", (status, a.result, iso(utcnow()), a.id))
+                "lease_until=NULL, engine_used=COALESCE(?, engine_used) WHERE id=?",
+                (status, a.result, iso(utcnow()), a.by, a.id))
     out(a, {"ok": True, "id": a.id, "status": status}, f"{a.id} → {status}")
+    return 0
+
+
+def cmd_show(a) -> int:
+    """把一件任務的完整內容與結果再印一次；hook 送過之後也還讀得到。"""
+    con = open_db()
+    row = fetch(con, a.id)
+    if row is None:
+        raise Usage(f"沒有這件任務：{a.id}")
+    d = task_dict(row)
+    if a.json:
+        print(dumps(d))
+        return 0
+    print(f"{d['id']}  {d['status']}  engine={d['engine']}"
+          f"{'→' + d['engine_used'] if d['engine_used'] else ''}")
+    print(f"標題：{d['title']}")
+    print(f"會改的檔：{'、'.join(d['write_scope']) or '(無)'}")
+    if d["read_scope"]:
+        print(f"會讀的檔：{'、'.join(d['read_scope'])}")
+    print(f"要做什麼：{d['prompt']}")
+    print("結果：\n" + (d["result"] or "(還沒有結果)"))
     return 0
 
 
@@ -686,9 +775,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--depends-on", nargs="+", default=[], metavar="ID", help="要等這些任務 done 才開始")
     sp.add_argument("--engine", choices=("auto", "claude", "codex"), default="auto")
     sp.add_argument("--work-key", help="工作身分；同 key 已有 queued/running/done 就不重複建")
-    sp = add_cmd("claim", cmd_claim, "原子搶單（只搶不執行）")
+    sp = add_cmd("claim", cmd_claim, "原子搶單（只搶不執行）；自己要動手做之前先用它占住")
     sp.add_argument("--worker", default=DEFAULT_WORKER, help="搶單者名字")
     sp.add_argument("--lease-seconds", type=int, default=DEFAULT_LEASE)
+    sp.add_argument("--id", help="只搶這一件（不給就搶最早那件可做的）")
     sp = add_cmd("run", cmd_run, "搶一件並交給引擎做")
     sp.add_argument("--worker", default=DEFAULT_WORKER, help="搶單者名字")
     sp.add_argument("--timeout-seconds", type=int, default=DEFAULT_TIMEOUT)
@@ -706,7 +796,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp = add_cmd(name, cmd_finish, f"手動把任務標成 {'done' if name == 'done' else 'failed'}")
         sp.add_argument("id")
         sp.add_argument("--result", default="（手動結案）", help="結果摘要")
+        sp.add_argument("--by", choices=ENGINES, help="是誰做的（對話裡自己做完就填自己）")
     sp = add_cmd("requeue", cmd_requeue, "needs_decision 或 failed 改回 queued")
+    sp.add_argument("id")
+    sp = add_cmd("show", cmd_show, "把一件任務的內容與結果再印一次")
     sp.add_argument("id")
     return p
 
