@@ -2,7 +2,7 @@
 
 **讓 Claude Code 和 Codex 共用同一個工作區，又不互相踩到的設計筆記。**
 
-> 這是一份設計說明，不是可安裝的軟體。我把自己電腦上跑了一個月的本機任務平台拆開講：它解決什麼問題、靠哪幾條規則做到、踩過哪些雷。程式本身綁死在我的環境裡，搬不出去；方法搬得出去。
+> 這裡有三樣東西：一篇設計說明（本文）、一份寫給 AI 看的施工圖（`BUILD_SPEC.md`）、一支照施工圖做出來的最小版程式（`aiq.py`，單檔、純標準函式庫）。本文把我自己電腦上跑了一個月的本機任務平台拆開講：它解決什麼問題、靠哪幾條規則做到、踩過哪些雷。完整版綁死在我的環境裡，搬不出去；方法和最小版搬得出去。
 
 [English abstract](#english-abstract) · [授權](#授權) · 作者：陳昱傑（[Nouischen](https://github.com/Nouischen)），骨科診所院長，把 Claude Code 與 Codex 當每天的工具在用。
 
@@ -20,6 +20,25 @@
 | 兩邊重工、互相看不見對方做過什麼 | §2 |
 | 換模型接手，進度怎麼傳、要不要寫交接手冊 | §4 |
 | 額度快用完，怎麼自動換另一邊 | §5 |
+
+## 不想看懂內文？叫你的 AI 裝最小版
+
+在你想用的專案資料夾裡開 Claude Code 或 Codex，貼這句話：
+
+> 請把 https://github.com/Nouischen/one-folder-two-agents 複製到一個暫存位置，讀它的 BUILD_SPEC.md，把 aiq.py 放進我現在這個專案資料夾，照 BUILD_SPEC.md 第 7 節跑驗收 T1 到 T7，全部通過後用白話告訴我怎麼用。改我的 hook 設定之前先問我。不要碰這個資料夾以外的檔案。
+
+裝好之後，你只要在同一個資料夾的對話裡講人話：
+
+- 「把〈某件事〉排進佇列，只准改〈哪些檔〉」
+- 「跑佇列」
+- 「現在跑到哪」
+
+結果會自己出現在下一句對話裡。最小版有登記、搶單、租約、一個檔案一個 writer、續作、結果回對話、只走訂閱；沒有暫存區寫入、整波盤點、另一引擎審查。細節在 `BUILD_SPEC.md` 第 0 節。
+
+兩件要知道的事：
+
+- 預設只放行「改專案內的檔案」。任務需要引擎跑指令或測試時，要用 `run --allow-all`，那會跳過引擎的所有權限確認，只在你信得過這件任務時用。
+- 我只在 Windows 上實測過（Python 3.14，Claude Code 與 Codex 都是 npm 安裝）。macOS 的路徑寫了但沒機器測；有人測過歡迎開 issue。
 
 ## 0. 三條原則
 
@@ -168,14 +187,14 @@
 
 ## 9. 這份筆記不包含什麼
 
-- **程式碼。** 兩個部件合計約九萬六千行 Python、近兩千個測試，但接線長在我的 hook 設定、我的 Codex 模型路由、我的 skill 檔裡；公開出去沒有人裝得起來，硬拆出來的成本比重寫高。
+- **完整版程式碼。** 兩個部件合計約九萬六千行 Python、近兩千個測試，但接線長在我的 hook 設定、我的 Codex 模型路由、我的 skill 檔裡；公開出去沒有人裝得起來，硬拆出來的成本比重寫高。這個 repo 裡的 `aiq.py` 是照 `BUILD_SPEC.md` 重寫的最小版，不是從完整版拆出來的。
 - **我的規則庫、語料、診所資料。** 那是我的身分和生意本身，別人拿去也沒用。
 
 一句話：**方法公開、資料上鎖、迴圈搬不走。** 真正的護城河不是程式，是修正史加每天餵它的人。
 
 ## English abstract
 
-Design notes, not software. I run a local, subscription-only task platform on my own Windows PC that lets Claude Code and OpenAI Codex share one working folder without stepping on each other. Three ideas carry it: (1) the control plane is a single SQLite queue, and both agents are merely executors that claim work atomically under leases, with a canonical work identity so the same job is never scheduled twice (execution itself stays honestly at-least-once); (2) every task declares read/write scopes, one writer per file at a time, writers work in an external staged copy that is promoted only after verification, and a whole-wave SHA-256 inventory fails any out-of-scope change; (3) results are pushed back into the originating chat session, with a hook-based pull as the fallback, so the chat stays the only front end. Engine choice for `auto` tasks happens at claim time from capacity hints and reset times; API-key environment variables are stripped so both CLIs run on their subscriptions. The code is welded to my environment and is not published; the method, the lessons, and a list of comparable open-source tools are.
+Design notes, not software. I run a local, subscription-only task platform on my own Windows PC that lets Claude Code and OpenAI Codex share one working folder without stepping on each other. Three ideas carry it: (1) the control plane is a single SQLite queue, and both agents are merely executors that claim work atomically under leases, with a canonical work identity so the same job is never scheduled twice (execution itself stays honestly at-least-once); (2) every task declares read/write scopes, one writer per file at a time, writers work in an external staged copy that is promoted only after verification, and a whole-wave SHA-256 inventory fails any out-of-scope change; (3) results are pushed back into the originating chat session, with a hook-based pull as the fallback, so the chat stays the only front end. Engine choice for `auto` tasks happens at claim time from capacity hints and reset times; API-key environment variables are stripped so both CLIs run on their subscriptions. The full platform is welded to my environment and is not published; the method, the lessons, a list of comparable open-source tools, an AI-readable build spec (`BUILD_SPEC.md`) and a minimal single-file reference implementation (`aiq.py`) are.
 
 ## 授權
 
