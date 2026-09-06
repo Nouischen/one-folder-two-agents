@@ -75,6 +75,7 @@ th{background:var(--soft);font-weight:800}
 .checklist label{display:flex;align-items:flex-start;gap:8px;cursor:pointer}
 .checklist input{margin-top:6px}
 .cmd{position:relative;margin:0 0 12px}
+blockquote{margin:14px 0;padding:12px 16px;border-left:4px solid var(--accent);background:var(--soft);border-radius:0 10px 10px 0;color:var(--ink);font-size:.96rem;line-height:1.7}
 .cmd pre{padding-right:86px;margin:0;white-space:pre-wrap;word-break:break-all}
 .copy{position:absolute;top:10px;right:10px;background:#fff;color:var(--accent-d);border:1.5px solid var(--line);border-radius:9px;padding:6px 12px;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer}
 .copy:hover{background:var(--soft)}
@@ -220,21 +221,24 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
 </div></section>
 
 <section id="use"><div class="wrap">
-  <h2>平常怎麼用：你就正常講話</h2>
-  <p>裝好之後不用記指令，也不用背任何暗號。你在這個資料夾的對話裡正常交辦，AI 讀得到安裝時留下的使用說明，自己知道要走這份待辦清單。下面是三個真的會用到的時刻，句子照抄或用自己的話講都行。</p>
+  <h2>平常怎麼用</h2>
+  <p><b>先講清楚什麼時候用得到。</b>如果你從頭到尾只開一個 AI、一個對話，那你不需要這個東西，直接叫它做就好。它是為了「同一個資料夾會有第二個人動手」而存在的：另一個 AI、另一個對話，或是你等一下換過去的那一邊。</p>
+  <p>裝好之後不用記指令，也不用背暗號。你正常交辦，AI 讀得到安裝時留下的說明，自己知道要走這份共用清單。三個真的會用到的時刻：</p>
 
   <div class="card">
-    <h3>一、交辦一件要花點時間的事</h3>
-    <p class="muted">最常見。你講你要什麼，加一句「這個你排進去做」。它會登記、然後<b>自己動手做</b>，不會停下來等你再說一次，也不會另外叫一個 AI 來做同一件事，所以不會多花一次額度。</p>
-    <div class="cmd"><pre><code id="c-say1">README 的安裝那段寫得太術語了，幫我改白話一點，這個你排進去做</code></pre><button class="copy" data-for="c-say1" type="button">複製</button></div>
-    <p class="muted"><b>要動哪些檔不用你想。</b>AI 看完你的要求和資料夾內容自己判斷，登記完會告訴你一聲「會改的是這幾個檔」。你有特別在意的才補一句「只能動這個檔」，它以你的為準。</p>
+    <h3>一、你要交辦一件會動到檔案的事，而且待會另一邊也要做事</h3>
+    <p class="muted">你講你要什麼，加一句「這個你排進去做」。它會先把「會動到哪幾個檔」登記起來<b>把那幾個檔佔住</b>，然後自己動手做。</p>
+    <div class="cmd"><pre><code id="c-say1">report.md 第一段太囉唆了，幫我改短一點，這個你排進去做</code></pre><button class="copy" data-for="c-say1" type="button">複製</button></div>
+    <p class="muted"><b>佔住之後才是重點。</b>你同時在另一邊（Codex，或另一個對話）做別的事，那邊動手前會先看一眼這份清單，發現這幾個檔有人佔著就不會碰。這是我實測過的原話，我請一個全新的 Codex 去改同一個檔，它回：</p>
+    <blockquote><code>report.md</code> 已有另一邊排隊中的同一項修改，我先不碰，避免兩邊互相覆寫。你要我等那邊完成，還是改做其他事？</blockquote>
+    <p class="muted">檔案完全沒被動到。<b>要動哪些檔不用你想</b>，AI 看完你的要求和資料夾自己判斷，登記完會告訴你一聲。你有特別在意的才補一句「只能動這個檔」。</p>
   </div>
 
   <div class="card">
     <h3>二、額度快用完，換另一邊接手</h3>
-    <p class="muted">這是這整個東西最有感的時刻。Claude 快沒額度時，你先把還沒做的交辦下去，然後在同一個資料夾開 Codex，講這句：</p>
+    <p class="muted">Claude 快沒額度時，你先把還沒做的交辦下去，然後在同一個資料夾開 Codex，講這句：</p>
     <div class="cmd"><pre><code id="c-say2">我 Claude 額度快用完了，這邊還有什麼沒做完的嗎？有的話你接著做</code></pre><button class="copy" data-for="c-say2" type="button">複製</button></div>
-    <p class="muted">它會自己看到待辦清單裡還有什麼、用<b>它自己的額度</b>接著做，不用你重講一次背景。做到一半被中斷的，會從上次記錄的進度接下去，不從頭來。反過來從 Codex 換回 Claude 也一樣。這一段我實測過：Codex 收到這句話之後自己找到沒做完的那件、做完、記錄完成，全程一次額度。</p>
+    <p class="muted">它會自己看到清單上還有什麼、用<b>它自己的額度</b>接著做，不用你重講一次背景。做到一半被中斷的，會從上次記錄的進度接下去，不從頭來。反過來從 Codex 換回 Claude 也一樣。這段我也實測過：Codex 收到這句話之後自己找到沒做完的那件、做完、記錄完成，全程一次額度。</p>
   </div>
 
   <div class="card">
