@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>一個資料夾、兩個 AI｜讓 Claude Code 和 Codex 共用同一個工作區，又不互相踩到</title>
-<meta name="description" content="Claude Code 與 Codex 開同一個專案資料夾，共用一條本機佇列：先登記再做、同一份檔案同一時間只有一個人寫、做完的結果自動回到原本那個對話、只走訂閱不走 API。單檔 Python、零套件。貼一句話給你的 AI，它自己裝好。">
+<meta name="description" content="Claude Code 與 Codex 開同一個專案資料夾，共用一份本機待辦清單：先登記再做、同一份檔案同一時間只有一個人寫、做完的結果自動回到原本那個對話、只走訂閱不走 API。單檔 Python、零套件。貼一句話給你的 AI，它自己裝好。">
 <meta property="og:title" content="一個資料夾、兩個 AI｜讓 Claude Code 和 Codex 共用同一個工作區">
 <meta property="og:description" content="讓 Claude Code 和 Codex 共用同一個工作區，又不互相踩到。貼一句話給你的 AI，它自己裝，大約十分鐘。">
 <style>
@@ -111,9 +111,9 @@ ul{padding-left:22px}li{margin-bottom:6px}
   <p>再來是額度。一邊的額度快用完，要換另一邊接著做，兩邊就得看到同一份東西，而且接手的那個要知道做到哪了。另一位同業問的正是這個：「額度用完換另一個模型接手，它怎麼知道進度？每次都要寫交接手冊嗎？」</p>
   <p>最後是互踩。兩個 AI 同時做事，會改到同一份檔案，也會互相看不見對方做過什麼。我自己就撞過：8 月 8 日晚上 Codex 跑完一輪稽核，一個多小時後 Claude 又派了一個工兵做同一件事，兩邊都沒做錯，就是互相看不見，那一次重工是真的花掉的額度。所以要有規矩：<b>先登記再做、同一份檔案同一時間只有一個人寫、做完的結果回到原本那個對話。</b>這頁要裝的東西，就是把這三條規矩做成一個小程式。</p>
   <div class="flow">
-    <div class="box you"><b>你在對話裡講人話</b><small>「把某件事排進佇列」「跑佇列」「現在跑到哪」</small></div>
+    <div class="box you"><b>你在對話裡講人話</b><small>「這個你排進去做」「還有什麼沒做完」</small></div>
     <div class="arr">→</div>
-    <div class="box"><b>本機佇列</b><small>一個 SQLite 檔，Claude Code 與 Codex 讀同一份；登記、搶單、租約都記在這</small></div>
+    <div class="box"><b>本機待辦清單</b><small>一個 SQLite 檔，Claude Code 與 Codex 讀同一份；登記、搶單、租約都記在這</small></div>
     <div class="arr">→</div>
     <div class="box"><b>引擎去做事</b><small>Claude Code 或 Codex 在背景做，只准改宣告過的檔案</small></div>
     <div class="arr">→</div>
@@ -126,7 +126,7 @@ ul{padding-left:22px}li{margin-bottom:6px}
   <div class="grid2">
     <div class="card"><h3><span class="tag ok">有</span>做的事</h3>
       <ul>
-        <li><b>登記</b>：每件工作先進佇列，不管誰要做、你在不在旁邊看</li>
+        <li><b>登記</b>：每件工作先進待辦清單，不管誰要做、你在不在旁邊看</li>
         <li><b>搶單</b>：同一件事只有一個人搶得到；四個行程同時搶，永遠只有一個贏家</li>
         <li><b>租約</b>：搶到的人拿一張有期限的租約，行程當掉、租約過期，別人才能接手</li>
         <li><b>一檔一 writer</b>：每件任務先宣告要改哪些檔；同一份檔案同一時間只有一個人寫，範圍重疊又沒先後順序就直接拒收</li>
@@ -141,7 +141,7 @@ ul{padding-left:22px}li{margin-bottom:6px}
         <li>沒有整波盤點：不會在每一波結束後把整個資料夾掃一遍抓越界；只靠宣告和事後的 git 檢查</li>
         <li>沒有另一引擎審查：做完不會自動請另一個 AI 再驗一次</li>
         <li>沒有儀表板、不支援多台電腦</li>
-        <li>沒有常駐服務：你說「跑佇列」它才跑，不會自己在背景一直轉</li>
+        <li>沒有常駐服務：你交辦它才做，不會自己在背景一直轉</li>
         <li>它擋的是兩個聽話的 AI 不小心互踩，不是安全邊界；故意搗蛋的程式它擋不住</li>
       </ul>
     </div>
@@ -155,7 +155,7 @@ ul{padding-left:22px}li{margin-bottom:6px}
     <li><b>Windows 或 Mac。</b>只在 Windows 上實測過；Mac 的路徑寫了但沒機器測，有試過歡迎到 GitHub 回報</li>
     <li><b>Claude Code 或 Codex，至少一個</b>，而且已經用訂閱帳號登入。兩個都有更好，那就能互相接手</li>
     <li><b>Python 3.10 以上。</b>不確定有沒有沒關係，AI 會幫你檢查，沒有會教你裝</li>
-    <li><b>一個專案資料夾。</b>不要用家目錄、桌面，也不要用放了很多專案的共用資料夾；佇列是跟著資料夾走的，放錯位置會管到不該管的東西</li>
+    <li><b>一個專案資料夾。</b>不要用家目錄、桌面，也不要用放了很多專案的共用資料夾；待辦清單是跟著資料夾走的，放錯位置會管到不該管的東西</li>
   </ul>
 </div></section>
 
@@ -166,13 +166,13 @@ ul{padding-left:22px}li{margin-bottom:6px}
   <div class="card step">
     <label class="chk"><input type="checkbox" data-step="s0"><b>第 0 步：開一個專案資料夾</b></label>
     <p>例如在「文件」底下新建一個叫 <b>我的AI工作區</b> 的資料夾。已經有在用的專案資料夾就直接用那個，不用另外開。</p>
-    <p class="muted">做完會看到：一個空的（或你原本那個）資料夾。之後裝好的東西、佇列、紀錄全部都在這個資料夾裡，不會跑到別的地方。</p>
+    <p class="muted">做完會看到：一個空的（或你原本那個）資料夾。之後裝好的東西、待辦清單、紀錄全部都在這個資料夾裡，不會跑到別的地方。</p>
   </div>
 
   <div class="card step">
     <label class="chk"><input type="checkbox" data-step="s1"><b>第 1 步：在那個資料夾裡打開 Claude Code 或 Codex</b></label>
     <p>桌面 App 用「開啟資料夾」選第 0 步那個資料夾。用終端機的人先 <code>cd</code> 進那個資料夾，再打 <code>claude</code> 或 <code>codex</code>。</p>
-    <p class="muted">做完會看到：AI 的對話框，而且它顯示的工作目錄就是那個資料夾。位置不對就先關掉重開，因為佇列會裝在它當下站的那個資料夾。</p>
+    <p class="muted">做完會看到：AI 的對話框，而且它顯示的工作目錄就是那個資料夾。位置不對就先關掉重開，因為待辦清單會裝在它當下站的那個資料夾。</p>
   </div>
 
   <div class="card step">
@@ -192,7 +192,7 @@ ul{padding-left:22px}li{margin-bottom:6px}
       <li>它問你<b>要不要接 hook</b></li>
     </ol>
     <p>它的回報大概長這樣：</p>
-    <pre class="out">建了什麼：aiq.py 放在你的專案資料夾，資料都在 .aiq 裡。以後在這個資料夾的對話裡說「把某件事排進佇列」「跑佇列」「現在跑到哪」就好，要改哪些檔我會自己判斷再告訴你。
+    <pre class="out">建了什麼：aiq.py 放在你的專案資料夾，資料都在 .aiq 裡。以後在這個資料夾的對話裡說「這個你排進去做」「還有什麼沒做完」就好，要改哪些檔我會自己判斷再告訴你。
 
 驗收結果：T1 通過、T2 通過、T3 通過、T4 通過、T5 通過、T6 通過、T7 通過。
 
@@ -206,7 +206,7 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
     <p>它問「要不要接 hook」的時候，回它這句：</p>
     <div class="cmd"><pre><code id="c-hook">好，先備份再改</code></pre><button class="copy" data-for="c-hook" type="button">複製</button></div>
     <p>它會先把要加的內容印給你看，備份原本的設定檔，然後改 Claude Code 的 <code>settings.json</code> 或 Codex 的 <code>hooks.json</code>。</p>
-    <p class="muted">做完會看到：之後你在同一個資料夾開的任何 Claude Code 或 Codex 對話，每說一句話，還沒讀過的佇列結果就會自己出現在 AI 的脈絡裡，它會主動轉述給你。</p>
+    <p class="muted">做完會看到：之後你在同一個資料夾開的任何 Claude Code 或 Codex 對話，每說一句話，還沒讀過的工作結果就會自己出現在 AI 的脈絡裡，它會主動轉述給你。</p>
     <details>
       <summary>想自己看它會加什麼？展開</summary>
       <ul style="margin-top:12px">
@@ -221,7 +221,7 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
 
 <section id="use"><div class="wrap">
   <h2>平常怎麼用：你就正常講話</h2>
-  <p>裝好之後不用記指令，也不用背任何暗號。你在這個資料夾的對話裡正常交辦，AI 讀得到安裝時留下的使用說明，自己知道要走佇列。下面是三個真的會用到的時刻，句子照抄或用自己的話講都行。</p>
+  <p>裝好之後不用記指令，也不用背任何暗號。你在這個資料夾的對話裡正常交辦，AI 讀得到安裝時留下的使用說明，自己知道要走這份待辦清單。下面是三個真的會用到的時刻，句子照抄或用自己的話講都行。</p>
 
   <div class="card">
     <h3>一、交辦一件要花點時間的事</h3>
@@ -234,7 +234,7 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
     <h3>二、額度快用完，換另一邊接手</h3>
     <p class="muted">這是這整個東西最有感的時刻。Claude 快沒額度時，你先把還沒做的交辦下去，然後在同一個資料夾開 Codex，講這句：</p>
     <div class="cmd"><pre><code id="c-say2">我 Claude 額度快用完了，這邊還有什麼沒做完的嗎？有的話你接著做</code></pre><button class="copy" data-for="c-say2" type="button">複製</button></div>
-    <p class="muted">它會自己看到佇列裡還有什麼、用<b>它自己的額度</b>接著做，不用你重講一次背景。做到一半被中斷的，會從上次記錄的進度接下去，不從頭來。反過來從 Codex 換回 Claude 也一樣。這一段我實測過：Codex 收到這句話之後自己找到沒做完的那件、做完、記錄完成，全程一次額度。</p>
+    <p class="muted">它會自己看到待辦清單裡還有什麼、用<b>它自己的額度</b>接著做，不用你重講一次背景。做到一半被中斷的，會從上次記錄的進度接下去，不從頭來。反過來從 Codex 換回 Claude 也一樣。這一段我實測過：Codex 收到這句話之後自己找到沒做完的那件、做完、記錄完成，全程一次額度。</p>
   </div>
 
   <div class="card">
@@ -253,10 +253,10 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
 
 <section id="share"><div class="wrap">
   <h2>兩個 AI 怎麼共用</h2>
-  <p><b>開同一個資料夾，就是同一個佇列。</b>Claude Code 登記的任務 Codex 看得到，反過來也一樣，因為兩邊讀的是資料夾裡同一個 <code>.aiq</code>。你累積的檔案、參考資料、做過的紀錄都在同一處，不會分家。</p>
+  <p><b>開同一個資料夾，就是同一個待辦清單。</b>Claude Code 登記的任務 Codex 看得到，反過來也一樣，因為兩邊讀的是資料夾裡同一個 <code>.aiq</code>。你累積的檔案、參考資料、做過的紀錄都在同一處，不會分家。</p>
   <p><b>換手就是換額度。</b>接手的那一邊會用自己的額度去跑沒指定引擎的任務，所以你換過去省的是真的。</p>
   <p><b>兩個可以同時做事。</b>你在 Claude 那邊叫它做一件，同時在 Codex 那邊叫它做另一件，兩邊會各拿一件、同時進行。安全來自登記那一關：同時在排隊或執行中的任務，會動到的檔案一定不重疊，所以碰不到同一個檔。</p>
-  <p><b>兩件任務要改同一份檔案</b>：登記第二件時會被擋下來，AI 會告訴你跟哪一件衝突。你只要說「這件等那件做完再做」，它就會加上先後順序，兩件都能進佇列。</p>
+  <p><b>兩件任務要改同一份檔案</b>：登記第二件時會被擋下來，AI 會告訴你跟哪一件衝突。你只要說「這件等那件做完再做」，它就會加上先後順序，兩件都能進待辦清單。</p>
 </div></section>
 
 <section id="fail"><div class="wrap">
@@ -288,16 +288,16 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
   </div>
 
   <div class="card">
-    <h3><span class="tag warn">順序</span>跑佇列做的不是我剛排的那件</h3>
-    <p class="muted">佇列先進先出，會先做最早登記、還沒做完的那件。前面測試留下來的先收掉，再跑你要的。</p>
-    <div class="cmd"><pre><code id="c-fix-fifo">先列出佇列裡所有還沒做完的任務。前面測試留下來、我不需要的，幫我標成完成或失敗收掉，剩下我真的要做的再跑。</code></pre><button class="copy" data-for="c-fix-fifo" type="button">複製</button></div>
+    <h3><span class="tag warn">順序</span>它做的不是我剛交辦的那件</h3>
+    <p class="muted">清單先進先出，會先做最早登記、還沒做完的那件。前面測試留下來的先收掉，再跑你要的。</p>
+    <div class="cmd"><pre><code id="c-fix-fifo">先列出待辦清單裡所有還沒做完的任務。前面測試留下來、我不需要的，幫我標成完成或失敗收掉，剩下我真的要做的再跑。</code></pre><button class="copy" data-for="c-fix-fifo" type="button">複製</button></div>
   </div>
 </div></section>
 
 <section id="remove"><div class="wrap">
   <h2>之後想移除</h2>
   <p>一樣在那個資料夾的對話裡跟 AI 說一句：</p>
-  <div class="cmd"><pre><code id="c-remove">請幫我移除佇列：先備份，然後刪掉這個資料夾裡的 aiq.py 和 .aiq 資料夾，再把 Claude Code 的 settings.json（或 Codex 的 hooks.json）裡呼叫 aiq.py hook 的那一段拿掉。改設定檔之前先備份一份。</code></pre><button class="copy" data-for="c-remove" type="button">複製</button></div>
+  <div class="cmd"><pre><code id="c-remove">請幫我移除這個待辦清單：先備份，然後刪掉這個資料夾裡的 aiq.py 和 .aiq 資料夾，再把 Claude Code 的 settings.json（或 Codex 的 hooks.json）裡呼叫 aiq.py hook 的那一段拿掉。改設定檔之前先備份一份。</code></pre><button class="copy" data-for="c-remove" type="button">複製</button></div>
   <p class="muted">沒接過 hook 的人，它只會刪那兩樣東西。你專案裡其他檔案不會被動到。</p>
 </div></section>
 
@@ -305,7 +305,7 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
   <h2>這不是完整版</h2>
   <p>這頁裝的是最小版：一個檔案，兩成的效果，夠一個人在同一台電腦上讓兩個 AI 不互踩。它是怎麼設計的、完整版多了什麼、踩過哪些雷，都寫在 <a href="https://github.com/Nouischen/one-folder-two-agents">GitHub 的設計筆記</a>裡。</p>
   <ul>
-    <li><b>只想依序交班</b>（Claude 做完換 Codex，或同一個工具開新對話）：不需要佇列，用 <a href="https://github.com/Nouischen/cross-ai-progress-bridge">cross-ai-progress-bridge</a> 把進度存成專案裡一個 Markdown 就夠，比這頁的東西更輕。</li>
+    <li><b>只想依序交班</b>（Claude 做完換 Codex，或同一個工具開新對話）：不需要待辦清單，用 <a href="https://github.com/Nouischen/cross-ai-progress-bridge">cross-ai-progress-bridge</a> 把進度存成專案裡一個 Markdown 就夠，比這頁的東西更輕。</li>
     <li><b>想在手機上開新對話、卻落在自己電腦上</b>：那是另一個小工具，<a href="https://claude-code-phone-gateway.pages.dev">claude-code-phone-gateway.pages.dev</a>。</li>
   </ul>
 </div></section>
