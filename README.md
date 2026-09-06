@@ -199,4 +199,4 @@ Design notes, not software. I run a local, subscription-only task platform on my
 
 ## 授權
 
-文字採 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.zh-hant)：可以轉載、改寫、拿去教，註明出處就好。
+文字採 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.zh-hant)：可以轉載、改寫、拿去教，註明出處就好。程式（`aiq.py` 與 `tests/`）採 MIT，細節在 `LICENSE`。
