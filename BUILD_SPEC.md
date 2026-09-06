@@ -210,8 +210,8 @@ Codex：在 `~/.codex/hooks.json` 的 `UserPromptSubmit` 加同樣的指令。
 | T4 | `claim --lease-seconds 1`，等 2 秒，再 `claim` | 第二次搶得到，`attempt` 從 1 變 2 |
 | T5 | 手動 `done` 一件，跑 `hook` 兩次 | 第一次印出結果，第二次什麼都不印，exit 都是 0 |
 | T6 | 環境變數先設 `ANTHROPIC_API_KEY=x`，跑 `run --dry-run` | 輸出 `stripped: true` |
-| T7 | 先把 `.aiq/tasks.db` 備份一份，再把它改成壞檔（例如寫入亂碼），跑 `hook` | 沒有輸出、沒有 traceback、exit 0；測完用備份還原，不要直接刪掉（裡面可能已經有真實任務） |
-| T8 | 真跑一次（要先問使用者同意，會用一次額度）：`add "建立 hello.txt，內容一行 hi" --write hello.txt --engine claude`（或 codex），然後 `run` | `hello.txt` 存在且內容正確、任務 `done`、`hook` 印得出結果 |
+| T7 | 先把 `.aiq/tasks.db` 備份一份，再把它改成壞檔（例如寫入亂碼），跑 `hook` | 沒有輸出、沒有 traceback、exit 0；測完用備份覆寫還原，不要直接刪掉資料庫本身（裡面可能已經有真實任務）；還原後那個備份檔可留可刪 |
+| T8 | 真跑一次（要先問使用者同意，會用一次額度）：`add "建立 hello.txt，內容一行 hi" --write hello.txt --engine claude`（或 codex），然後 `run`。自訂 `--timeout-seconds` 就給寬一點（300 以上），一次真跑常要 60 到 120 秒 | `hello.txt` 存在且內容正確、任務 `done`、`hook` 印得出結果 |
 
 T1 到 T7 不花額度，自己跑完貼結果。T8 要使用者同意。
 
