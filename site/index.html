@@ -93,7 +93,7 @@ ul{padding-left:22px}li{margin-bottom:6px}
 <nav><div class="wrap">
   <span class="logo">一個資料夾、兩個 AI</span>
   <span class="sp"></span>
-  <span class="links"><a href="#why">緣起</a><a href="#what">做什麼</a><a href="#need">需要什麼</a><a href="#install">安裝</a><a href="#use">怎麼用</a><a href="#fail">排錯</a><a href="https://github.com/Nouischen/one-folder-two-agents">GitHub</a></span>
+  <span class="links"><a href="#why">緣起</a><a href="#what">做什麼</a><a href="#need">需要什麼</a><a href="#install">安裝</a><a href="#use">怎麼用</a> <a href="#habit">變成習慣</a><a href="#fail">排錯</a><a href="https://github.com/Nouischen/one-folder-two-agents">GitHub</a></span>
 </div></nav>
 
 <header class="hero"><div class="wrap">
@@ -165,14 +165,19 @@ ul{padding-left:22px}li{margin-bottom:6px}
   <p class="muted">會用這個的人，電腦上一定已經有 Claude Code 或 Codex。所以最簡單的裝法不是你打指令，是叫它裝。做完一步就打勾，勾勾會記在你的瀏覽器裡。</p>
 
   <div class="card step">
-    <label class="chk"><input type="checkbox" data-step="s0"><b>第 0 步：開一個專案資料夾</b></label>
-    <p>例如在「文件」底下新建一個叫 <b>我的AI工作區</b> 的資料夾。已經有在用的專案資料夾就直接用那個，不用另外開。</p>
-    <p class="muted">做完會看到：一個空的（或你原本那個）資料夾。之後裝好的東西、待辦清單、紀錄全部都在這個資料夾裡，不會跑到別的地方。</p>
+    <label class="chk"><input type="checkbox" data-step="s0"><b>第 0 步：選一個你「以後真的會一直用」的資料夾</b></label>
+    <p><b>這一步決定這個東西會不會被你用起來。</b>不要另外開一個測試夾裝完就丟——裝在你平常真的在累積東西的那個資料夾，以後 Claude 和 Codex 都從這裡開始，資料才會一直長在同一個地方。</p>
+    <p>兩種常見選法，挑一種：</p>
+    <ul>
+      <li><b>母資料夾（推薦給大部分人）</b>：在「文件」底下開一個 <b>AI工作區</b>，以後每個題目在裡面開子資料夾（講稿、衛教文、投資筆記、某個專案…）。裝一次，一份清單管全部，子資料夾裡的檔案照樣受保護（實測過，子資料夾與更深層都算數）。</li>
+      <li><b>單一專案</b>：你已經有一個固定在用的專案資料夾（而且它自己是個 git repo），就直接裝在那裡。有好幾個這種專案就各裝一份，各自一份清單，互不干擾。</li>
+    </ul>
+    <p class="muted">做完會看到：一個資料夾。之後裝好的東西、待辦清單、紀錄全部都在這個資料夾裡，不會跑到別的地方。<b>建議順手讓 AI 在這個資料夾 <code>git init</code></b>，多一層「有沒有改到不該改的檔」的檢查。</p>
   </div>
 
   <div class="card step">
     <label class="chk"><input type="checkbox" data-step="s1"><b>第 1 步：在那個資料夾裡打開 Claude Code 或 Codex</b></label>
-    <p>桌面 App 用「開啟資料夾」選第 0 步那個資料夾。用終端機的人先 <code>cd</code> 進那個資料夾，再打 <code>claude</code> 或 <code>codex</code>。</p>
+    <p>桌面 App 用「開啟資料夾」選第 0 步那個資料夾。用終端機的人先 <code>cd</code> 進那個資料夾，再打 <code>claude</code> 或 <code>codex</code>。<b>以後每次都從這裡開</b>，這是整件事的關鍵。</p>
     <p class="muted">做完會看到：AI 的對話框，而且它顯示的工作目錄就是那個資料夾。位置不對就先關掉重開，因為待辦清單會裝在它當下站的那個資料夾。</p>
   </div>
 
@@ -259,6 +264,32 @@ hook 還沒接。要不要我幫你把「結果自動出現在下一句對話」
   <div class="cmd"><pre><code id="c-allow">這件任務需要跑指令或測試，跑的時候加 --allow-all</code></pre><button class="copy" data-for="c-allow" type="button">複製</button></div>
   <p><b>想指定模型時</b>：不指定就用各 CLI 自己的預設模型。要指定就叫 AI 用 <code>--model</code>。</p>
   <div class="cmd"><pre><code id="c-model">跑的時候用 --model 指定〈模型名稱〉</code></pre><button class="copy" data-for="c-model" type="button">複製</button></div>
+</div></section>
+
+<section id="habit"><div class="wrap">
+  <h2>怎麼讓它真的變成你的固定工作流</h2>
+  <p>這是這頁最重要的一段。裝完如果你隔天又回去用原本的資料夾，這東西就白裝了——它只認得裝它的那個資料夾。要讓它有用，只需要養成一個習慣：</p>
+
+  <div class="card">
+    <h3>以後不管開 Claude 還是 Codex，都從這個資料夾開始</h3>
+    <p class="muted">桌面 App 就用「開啟資料夾」選它；終端機就先 cd 進去再打指令。兩邊都從這裡開，於是兩邊看到的是同一份東西：同樣的檔案、同樣的參考資料、同樣的待辦清單、同樣做過的紀錄。</p>
+    <p class="muted">你累積的東西會從這個資料夾長出來，而不是散在各處、這邊一份那邊一份。這也是為什麼第 0 步要選「你真的會一直用」的那個資料夾。</p>
+  </div>
+
+  <div class="card">
+    <h3>把常用的東西也放進來</h3>
+    <p class="muted">參考資料、你的寫作範例、常用的規格與範本、正在進行的專案，都放在這個資料夾（或它的子資料夾）底下。兩個引擎都讀得到，換哪一邊接手都不用重新交代。</p>
+    <p class="muted">安裝時 AI 會在這裡留一份 <code>AIQ.md</code>，並在 <code>CLAUDE.md</code> 與 <code>AGENTS.md</code> 各寫一段規則。這三個檔就是「這個資料夾的規矩」——以後任何新對話一進來就會讀到，不用你交代。你自己的其他習慣也可以寫進 <code>CLAUDE.md</code>／<code>AGENTS.md</code>，一起長。</p>
+  </div>
+
+  <div class="card">
+    <h3>一句話檢查你有沒有走對</h3>
+    <p class="muted">在這個資料夾開一個新對話，隨便問一句，如果它知道這裡有待辦清單，就對了：</p>
+    <div class="cmd"><pre><code id="c-habit">這個資料夾有什麼規矩？還有什麼沒做完的？</code></pre><button class="copy" data-for="c-habit" type="button">複製</button></div>
+    <p class="muted">如果它一臉茫然，通常是你開錯資料夾了，或是安裝時那三個檔沒有建起來。</p>
+  </div>
+
+  <p class="muted"><b>誠實提醒</b>：清單是跟著資料夾走的。你在別的資料夾工作時，這裡的東西幫不上忙，也不會干擾你（結果只在你人在這個資料夾時才會出現）。所以「都從同一個地方開始」不是建議，是它能不能發揮作用的前提。</p>
 </div></section>
 
 <section id="share"><div class="wrap">

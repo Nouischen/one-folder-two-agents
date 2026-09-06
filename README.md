@@ -25,6 +25,8 @@
 
 小白版逐步教學（有勾選框和複製鍵）：https://one-folder-two-agents.pages.dev
 
+**裝在你真的會一直用的那個資料夾**，不要另外開一個測試夾裝完就丟。以後 Claude 和 Codex 都從這個資料夾開始，累積的檔案、參考資料與做過的紀錄才會長在同一個地方，兩邊都讀得到。清單是跟著資料夾走的，這是它能不能發揮作用的前提。
+
 在你想用的專案資料夾裡開 Claude Code 或 Codex，貼這句話：
 
 > 請把 https://github.com/Nouischen/one-folder-two-agents 複製到一個暫存位置，讀它的 BUILD_SPEC.md，把 aiq.py 複製進我現在這個專案資料夾，照 BUILD_SPEC.md 第 7 節跑驗收 T1 到 T7，全部通過後用白話告訴我怎麼用。改我的 hook 設定之前先問我。不要碰這個資料夾以外的檔案。
