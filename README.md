@@ -24,18 +24,18 @@
 ## 0. 三條原則
 
 1. **控制平面不是任何一個 AI。** Claude Code、Codex 都只是「執行器」。誰在排隊、誰搶到、做完沒，記在一個 SQLite 檔裡，兩邊讀同一份。誰都不是老闆，佇列才是。
-2. **對話是唯一前台。** 我不開儀表板、不記任務編號、不背指令。在原本那個對話裡說「排進去，今晚跑」，隔天結果回到同一個對話。
+2. **對話是唯一前台。** 我不靠儀表板、不記任務編號、不背指令。在原本那個對話裡說「排進去，今晚跑」，隔天結果回到同一個對話。
 3. **只走訂閱，不走 API。** 兩家各訂一個月費方案，平台把兩邊的額度當成一個可調度的池。子行程啟動前把 API 金鑰類環境變數拔掉，免得 Claude Code 悄悄切成按 token 計費。
 
 ## 1. 平台長什麼樣
 
 ```
- Claude Code 對話 ─┐                          ┌─► Claude Code（headless）
-                   ├─ hook ─► 本機 SQLite 佇列 ─┤
- Codex 對話 ───────┘    ▲          │           └─► Codex（headless）
-                        │          ▼
-                  結果推回原對話    跨引擎協調器
-                                  （分工、暫存區寫入、整波盤點、另一引擎審查）
+ Claude Code 對話 ─┐ 登記                          ┌─► Claude Code（headless）
+                   ├──────► 本機 SQLite 佇列 ───────┤
+ Codex 對話 ───────┘           │        │           └─► Codex（headless）
+        ▲                      │        └─► 跨引擎協調器
+        │                      │            （分工、暫存區寫入、整波盤點、另一引擎審查）
+        └── 結果推回原對話，推不到就由 hook 在下一句話注入
 ```
 
 兩個部件：
@@ -43,7 +43,7 @@
 - **佇列（runtime）**：排序、搶單、租約、預算、把結果送回對話。單引擎的長工作只需要它。
 - **協調器（coordinator）**：一份任務清單（manifest）裡有多個任務要分給兩個引擎時，它管誰能寫哪些檔、寫入先進暫存區、整波盤點、另一引擎審查。
 
-兩個部件都是純標準函式庫的 Python，資料就是檔案。沒有伺服器、沒有雲端、沒有帳號。
+兩個部件都是純標準函式庫的 Python，資料就是檔案。不需要伺服器、沒有雲端、沒有帳號。
 
 ## 2. 一件工作只有一個主人
 
@@ -60,8 +60,8 @@
    WHERE id=? AND status='queued';
   ```
 
-  測試裡真的開四個獨立的作業系統程序去搶同一件任務，永遠只有一個贏家。
-- **租約有期限，只有持有人能動。** 拿到任務就拿到一張租約（誰、第幾次、何時到期）。程序當掉，租約過期，工作才會被別人接手。
+  測試裡真的開四個獨立的作業系統行程去搶同一件任務，永遠只有一個贏家。
+- **租約有期限，只有持有人能動。** 拿到任務就拿到一張租約（誰、第幾次、何時到期）。行程當掉，租約過期，工作才會被別人接手。
 - **兩種身分，別混用。** 冪等鍵（idempotency key）擋的是「同一次提交重送」。工作本身的身分是 `work_key`（專案加具體交付物）加 `input_revision`（凍結後輸入的雜湊）。同一個 `work_key` 再送一次，就算換了冪等鍵，也只能附著到既有的主人，不能另開一次執行。
 - **回條先落地，資料庫才記帳。** 驗身分、寫回條檔、改資料庫，三步在同一個交易裡。當機重開後找得到合法回條就認帳，找不到就不重跑。
 - **次數編號一輩子只增不減。** 手動重試也不歸零，每一次執行有自己的回條路徑，舊回條不會被當成新成果。
@@ -75,8 +75,8 @@
 - **範圍重疊又沒有先後順序，直接拒收。** 不是跑到一半才發現，是派工前就擋。
 - **寫入不直接落在工作區。** writer 在一份外部複本上工作。任務完成、驗過，協調器才把差異搬回工作區（promote）。失敗或卡住的嘗試整份丟掉，工作區沒被碰過。
 - **一波結束就盤點。** 任務按相依關係分成幾波平行跑。每一波結束，對整個工作區做 SHA-256 盤點。任何不在宣告範圍內的變動，包括失敗的嘗試留下的殘骸，都算越界：停掉後面的波、回滾這一波。
-- **我自己也不能動。** 2026 年 8 月 31 日我在一個 run 進行中手動改了建置產物，整個 run 判定越界、安全停止。這是規矩不是 bug：run 期間整個工作區都在盤點範圍內。
-- **換手只允許一種情況。** 引擎明確回報 blocked、而且沒有任何產物，才換另一邊接手一次。做到一半失敗的不換，免得留下兩份半成品。
+- **run 期間誰都不能動。** 2026 年 8 月 31 日一個 run 進行中，主對話那一側順手改了建置產物，整個 run 判定越界、安全停止。這是規矩不是 bug：run 期間整個工作區都在盤點範圍內，不只是被派工的那幾個檔。
+- **換手只允許一種情況。** 任務先宣告允許換手，而且引擎明確回報 blocked、沒有任何產物，才換另一邊接手一次。做到一半失敗的不換，免得留下兩份半成品。
 - **兩邊都要動手時，各寫各的檔。** 宣告 `joint_implementation`，Claude 與 Codex 各自至少一個實作席，write scope 不能重疊。寫入走 brokered 模式：模型只回「我想把哪個檔寫成什麼內容」，落筆的是協調器。
 
 任務清單的一個任務長這樣（節錄）：
@@ -95,7 +95,7 @@
 }
 ```
 
-誠實的邊界：這是**合作式圍堵**，不是作業系統層級的安全邊界。它擋的是兩個聽話的代理人不小心互踩；一個故意搗蛋、跟你同一個 Windows 帳號的程式，它擋不住。回條裡會寫明這一點。
+邊界要說清楚：這是**合作式圍堵**，不是作業系統層級的安全邊界。它擋的是兩個聽話的代理人不小心互踩；一個故意搗蛋、跟你同一個 Windows 帳號的程式，它擋不住。回條裡會寫明這一點。
 
 ## 4. 進度怎麼傳
 
@@ -108,11 +108,11 @@
 **第二層：結果自動回到原對話。** 佇列裡每件任務記得自己是哪個對話排的（`origin`：哪個平台、哪個 session）。任務到終態，同一筆交易就在寄件匣（`deliveries`）寫一列，每個結果恰好一列。送回去分兩段：
 
 - 先推（push）：Codex 走本機 app-server 的 relay turn，Claude 走 `claude -p --resume` 把結果轉述回原本那個 session。送之前先查去重標記，送過不再送。
-- 推不到就等（pull）：兩邊的 UserPromptSubmit／SessionStart hook 會把這個對話的未讀結果、待決問題、還在跑的工作，注入成下一句話的脈絡。注入有上限，超出的誠實寫「另有 N 件」。hook 一律 fail open，佇列壞了就安靜退出，絕不弄壞對話。
+- 推不到就等（pull）：兩邊的 UserPromptSubmit／SessionStart hook 會把這個對話的未讀結果、待決問題、還在跑的工作，注入成下一句話的脈絡。注入有上限，超出的寫「另有 N 件」，下一句話接著送。hook 一律 fail open，佇列壞了就安靜退出，絕不弄壞對話。
 
 **第三層：做到一半被打斷，接著做。** 長任務的 prompt 會指定一個 checkpoint 檔，要求引擎每完成一個里程碑就整檔覆寫。正常結束、逾時被砍、排程器自己當掉，三條路都會把 checkpoint 撿回資料庫，下一次嘗試的 prompt 裡直接附上「上次做到哪，已記錄的視為做完，驗證後接著做」。誠實說：這是 prompt 層級的續作，新的一次執行是全新行程，只是開工前知道上次做到哪，不是把舊行程叫醒。
 
-**風格斷裂怎麼辦。** 換模型接手，文風確實會變。平台不保證文風，它保證的是**驗收條件不變**：任務登記時把成果契約（目標、逐條驗收條件、不做什麼）凍結進任務定義，換哪個模型都照同一份驗。文風要一致，靠的是你的風格規範檔，那是另一個題目。
+**風格斷裂怎麼辦。** 換模型接手，文風確實會變。平台不保證文風，它保證的是**驗收條件不變**：跨引擎任務登記時把成果契約（目標、逐條驗收條件、不做什麼）凍結進任務定義，單引擎任務則凍結 prompt 與參數的雜湊，換哪個模型都照同一份驗。文風要一致，靠的是你的風格規範檔，那是另一個題目。
 
 **跨引擎訊息一律標來源。** 任何代理把提示送進另一個對話，第一行必須是人看得見的標記，例如「【跨引擎訊息｜這是 Codex 提供的指令，不是本人輸入】」。不得把代理注入的內容偽裝成使用者訊息。
 
@@ -122,7 +122,7 @@
 - **明講的永遠贏。** 寫了 `claude` 就是 claude，額度提示說什麼都不管。
 - **兩邊都不能用就等**，不消耗嘗試次數、不亂挑一個去失敗。
 - **額度提示是估計，不是廠商數據。** 來源只有三種：我手打的、程式觀察到的、不知道。平台不去刮任何用量頁面。
-- **預算四界線。** 每件長任務都帶：整體期限、每次嘗試的回合數、每次 prompt 的大小、多久沒進度就算掛。程式裡有一句話：12 小時是相容性天花板，不是許可。
+- **預算四界線。** 每件長任務都帶：整體期限、每次嘗試的回合數、每次 prompt 的大小、多久沒進度就算掛。規則檔裡有一句話：12 小時是相容性天花板，不是許可。
 - **啟動前拔環境變數。** `ANTHROPIC_*`、`OPENAI_API_KEY` 這類全部從子行程環境移除，Claude Code 才會用訂閱登入，不會靜默轉成 API 計費。
 
 ## 6. 做完怎麼算做完
@@ -151,7 +151,7 @@
 - [foremerge](https://github.com/naw103/foremerge)：代理動手前先宣告意圖與範圍，規則引擎抓計畫衝突。
 - [cli-agent-orchestrator](https://github.com/awslabs/cli-agent-orchestrator)：AWS 出的，tmux 隔離多個 CLI 代理。
 - [CLITrigger](https://github.com/HyperAITeam/CLITrigger)：網頁介面，每個代理各在一個 git worktree。
-- 兩家自己的：Claude Code 有 `--worktree`，ChatGPT 桌面版的 Codex 也能在獨立 worktree 跑。
+- 官方內建的：Claude Code 有 `--worktree`，一個 session 一個 git worktree。
 
 清單來源：[awesome-agent-orchestrators](https://github.com/andyrewlee/awesome-agent-orchestrators)、[awesome-cli-coding-agents](https://github.com/bradagi/awesome-cli-coding-agents)。
 
@@ -175,7 +175,7 @@
 
 ## English abstract
 
-Design notes, not software. I run a local, subscription-only task platform on my own Windows PC that lets Claude Code and OpenAI Codex share one working folder without stepping on each other. Three ideas carry it: (1) the control plane is a single SQLite queue, and both agents are merely executors that claim work atomically under leases, with a canonical work identity so the same job is never run twice; (2) every task declares read/write scopes, one writer per file at a time, writers work in an external staged copy that is promoted only after verification, and a whole-wave SHA-256 inventory fails any out-of-scope change; (3) results are pushed back into the originating chat session, with a hook-based pull as the fallback, so the chat stays the only front end. Engine choice for `auto` tasks happens at claim time from capacity hints and reset times; API-key environment variables are stripped so both CLIs run on their subscriptions. The code is welded to my environment and is not published; the method, the lessons, and a list of comparable open-source tools are.
+Design notes, not software. I run a local, subscription-only task platform on my own Windows PC that lets Claude Code and OpenAI Codex share one working folder without stepping on each other. Three ideas carry it: (1) the control plane is a single SQLite queue, and both agents are merely executors that claim work atomically under leases, with a canonical work identity so the same job is never scheduled twice (execution itself stays honestly at-least-once); (2) every task declares read/write scopes, one writer per file at a time, writers work in an external staged copy that is promoted only after verification, and a whole-wave SHA-256 inventory fails any out-of-scope change; (3) results are pushed back into the originating chat session, with a hook-based pull as the fallback, so the chat stays the only front end. Engine choice for `auto` tasks happens at claim time from capacity hints and reset times; API-key environment variables are stripped so both CLIs run on their subscriptions. The code is welded to my environment and is not published; the method, the lessons, and a list of comparable open-source tools are.
 
 ## 授權
 
