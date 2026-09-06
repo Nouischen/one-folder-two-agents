@@ -69,7 +69,7 @@ aiq.py          單一程式檔，所有指令都在這裡
 
    ```
    ## 這個資料夾有一份共用待辦清單（aiq.py）
-   動手改任何檔案之前，先跑一次 status 看一眼（指令用安裝時確認過的那個 Python 完整路徑，macOS 上 `python` 通常不存在）；清單上有 queued 或 running 的任務會動到你要改的檔，就先停手問使用者。
+   動手改任何檔案之前，先跑一次 `<python> aiq.py status` 看一眼（`<python>` 用安裝時確認過的解譯器完整路徑；macOS 上 `python` 這個指令通常不存在）。清單上有 queued 或 running 的任務會動到你要改的檔，就先停手問使用者。
    其餘用法見同資料夾的 AIQ.md。
    ```
 
