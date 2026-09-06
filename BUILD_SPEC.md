@@ -46,9 +46,10 @@ aiq.py          單一程式檔，所有指令都在這裡
    使用者不會用指令，他講的是意思，不是關鍵字。凡是他表達「把某件事排進去／排隊做／等一下做」「去跑／開始做／跑佇列」「做到哪了／進度」這類意思，就對到下面的指令，不要要求他照字面講。他只負責說要做什麼，該動哪些檔由你判斷：
    - 登記：先自己看他的要求與這個資料夾的內容，判斷這件事需要動哪些檔，再 python aiq.py add "標題" --prompt "要做什麼與驗收條件" --write <你判斷出來的檔案或資料夾>...
      範圍是你的工作，不是他的。登記完用一句話告訴他「排進去了，會改的是這幾個檔」，不要反過來叫他指定。只有真的判斷不出來（同名檔案很多、他的說法可以指到兩個完全不同的地方）才問一句。他主動指定時以他的為準。
-   - 執行：python aiq.py run --worker <你的名字> --engine <你自己是 claude 還是 codex>
-     加 --engine 是因為：他換到你這邊的對話，通常就是要用你的額度。任務要跑指令或測試加 --allow-all。
-   - 他一句話裡同時有交辦和「你做」的意思（例如「這個你排進去做」「順便跑一下」），就 add 完直接 run，不要停下來等他再說一次。
+   - **他人在現場、要你現在做（最常見）：你自己動手做。** 照登記的 write_scope 做，不要碰別的檔；做完 python aiq.py done <id> --result "做了什麼、怎麼驗的"。
+     不要為了「跑佇列」再去啟動另一個引擎做同一件事：你本來就是引擎，那樣會多花一次額度，在 Codex 對話裡還會因為巢狀沙箱直接失敗。
+   - **他明說要放著跑、不看著（「放著跑」「我先去忙」「睡了」）：** python aiq.py run --worker <你的名字> --engine <你自己是 claude 還是 codex>，讓它另外開一個引擎在背景做。任務要跑指令或測試加 --allow-all。
+   - 他一句話裡同時有交辦和「你做」的意思（例如「這個你排進去做」），就 add 完直接自己動手，不要停下來等他再說一次。
    - 狀態：python aiq.py status
    - 收掉／重排：python aiq.py done|fail|requeue <id>
    做完的結果會由 hook 注入下一句對話；沒接 hook 就跑 python aiq.py hook 讀。細節看 python aiq.py --help。
@@ -185,7 +186,11 @@ python aiq.py requeue ID              needs_decision 或 failed 改回 queued
 
 ## 5. 執行模式
 
-最小版沒有常駐服務。使用者要跑佇列時，AI 或使用者執行：
+**兩種做法，別搞混。** 使用者在對話裡要你現在做，你就自己做完再 `done` 記帳——你本身就是引擎，再開一個只是多花一次額度。`run` 是給「他不在旁邊、要背景做」用的，它會另外啟動一個 headless 引擎。
+
+⚠ 在 Codex 的對話裡執行 `run` 且任務又要交給 codex 時，內層 codex 會因為外層沙箱而起不來（`engine.log` 出現 `os error 5`、`failed to initialize in-process app-server client`）。所以在 Codex 對話裡優先自己動手，或讓任務交給 claude。
+
+最小版沒有常駐服務。要跑佇列時，AI 或使用者執行：
 
 ```
 python aiq.py run --worker 我
