@@ -48,6 +48,11 @@ if mode == "stray":
     (root / "stray.txt").write_text("oops", encoding="utf-8")
 if mode in ("write", "stray"):
     (tdir / "result.md").write_text("fake done: " + mode, encoding="utf-8")
+if mode == "nonzero":
+    (tdir / "result.md").write_text("looks complete", encoding="utf-8")
+    sys.exit(7)
+if mode == "empty":
+    (tdir / "result.md").write_text("   ", encoding="utf-8")
 sys.exit(0)
 '''
 
@@ -68,6 +73,16 @@ class AiqCase(unittest.TestCase):
 
     # ---- helpers ----
     def aiq(self, *args, env=None, cwd=None, timeout=120):
+        # Legacy happy-path tests explicitly obtain the new claim receipt before finishing.
+        if args and args[0] in ("done", "fail") and "--token" not in args and "--help" not in args:
+            row = self.row(args[1])
+            if row["status"] == "queued":
+                rc, receipt, err = self.aiq("claim", "--id", args[1], "--worker", "test", "--json")
+                self.assertEqual(rc, 0, err)
+                token = json.loads(receipt)["claimed"]["claim_token"]
+            else:
+                token = row["claim_token"]
+            args = (*args, "--token", token)
         r = subprocess.run([PY, "-B", str(self.script), *args], cwd=str(cwd or self.tmp),
                            capture_output=True, env=env or self.env, timeout=timeout)
         return r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
@@ -95,12 +110,14 @@ class AiqCase(unittest.TestCase):
         for name in names:
             if IS_WIN:
                 (fakebin / f"{name}.cmd").write_text(
-                    f'@echo off\r\n"{PY}" "{script}" %*\r\n', encoding="ascii")
+                    '@echo off\r\n"%AIQ_TEST_PYTHON%" "%AIQ_TEST_ENGINE%" %*\r\n', encoding="ascii")
             else:
                 sh = fakebin / name
                 sh.write_text(f'#!/bin/sh\nexec "{PY}" "{script}" "$@"\n', encoding="utf-8")
                 sh.chmod(sh.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         env = dict(self.env)
+        env["AIQ_TEST_PYTHON"] = PY
+        env["AIQ_TEST_ENGINE"] = str(script)
         env["PATH"] = str(fakebin) + os.pathsep + env.get("PATH", "")
         if IS_WIN:
             env["PATHEXT"] = env.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD"
@@ -146,7 +163,7 @@ class AiqCase(unittest.TestCase):
         self.assertIn("read_scope", out)
 
     def test_t2b_bad_paths_rejected(self):
-        for bad in ("../x.txt", "/etc/passwd", "C:/Windows/x", ".", ".aiq/tasks.db", "a/../../b"):
+        for bad in ("../x.txt", "/etc/passwd", "C:/Windows/x", ".", ".aiq/tasks.db", ".AIQ/tasks.db", ".git/config", "a/../../b"):
             rc, out, err = self.aiq("add", "bad", "--prompt", "x", "--write", bad)
             self.assertEqual(rc, 2, bad)
             self.assertIn("拒收", err)
@@ -164,16 +181,22 @@ class AiqCase(unittest.TestCase):
         self.assertEqual(self.db().execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 1)
 
     # ---- T4 ----
-    def test_t4_expired_lease_is_recovered_and_reclaimed(self):
+    def test_t4_expiry_does_not_reassign_active_writer(self):
         task_id = self.add("lease")
         rc, out, _ = self.aiq("claim", "--worker", "w1", "--lease-seconds", "1", "--json")
-        self.assertEqual(json.loads(out)["claimed"]["attempt"], 1)
-        time.sleep(2)
-        rc, out, _ = self.aiq("claim", "--worker", "w2", "--lease-seconds", "60")
-        self.assertEqual(rc, 0)
-        self.assertIn(f"回收了 {task_id}", out)
-        row = self.row(task_id)
-        self.assertEqual((row["status"], row["lease_owner"], row["attempt"]), ("running", "w2", 2))
+        first = json.loads(out)["claimed"]
+        time.sleep(1.2)
+        rc, out, _ = self.aiq("claim", "--worker", "w2", "--json")
+        self.assertIsNone(json.loads(out)["claimed"])
+        self.assertEqual(self.row(task_id)["attempt"], 1)
+        self.assertEqual(self.aiq("requeue", task_id)[0], 2)
+        self.assertEqual(self.aiq("requeue", task_id, "--stopped", "--attempt", "1")[0], 0)
+        rc, out, _ = self.aiq("claim", "--worker", "w1", "--json")
+        second = json.loads(out)["claimed"]
+        self.assertEqual(second["attempt"], 2)
+        self.assertNotEqual(first["claim_token"], second["claim_token"])
+        self.assertEqual(self.aiq("done", task_id, "--token", first["claim_token"], "--result", "stale")[0], 2)
+        self.assertEqual(self.row(task_id)["status"], "running")
 
     def test_t4b_claim_respects_depends_on_order(self):
         a = self.add("first", write=("a.txt",))
@@ -280,7 +303,7 @@ class AiqCase(unittest.TestCase):
         rc, out, _ = self.aiq("run", "--worker", "w", env=env)
         row = self.row(task_id)
         self.assertEqual(row["status"], "needs_decision")
-        self.assertIn("沒有寫結果檔", row["result"])
+        self.assertIn("沒有非空結果檔", row["result"])
         rc, out, _ = self.aiq("requeue", task_id)
         self.assertEqual(self.row(task_id)["status"], "queued")
 
@@ -298,7 +321,7 @@ class AiqCase(unittest.TestCase):
         self.assertIn("越界改動：stray.txt", row["result"])
         self.assertNotIn("ok.txt", row["result"])
 
-    def test_run_timeout_kills_tree_and_requeues(self):
+    def test_run_timeout_kills_tree_and_requires_inspection(self):
         env = self.install_fake_engines("claude")
         env["AIQ_FAKE_MODE"] = "sleep"
         task_id = self.add("slow", "--engine", "claude", env=env)
@@ -306,7 +329,7 @@ class AiqCase(unittest.TestCase):
         rc, out, _ = self.aiq("run", "--worker", "w", "--timeout-seconds", "2", env=env)
         self.assertLess(time.monotonic() - started, 40)
         self.assertIn("逾時", out)
-        self.assertEqual(self.row(task_id)["status"], "queued")
+        self.assertEqual(self.row(task_id)["status"], "needs_decision")
         beat = self.tmp / ".aiq" / "tasks" / task_id / "heartbeat.txt"
         self.assertTrue(beat.exists())
         time.sleep(1.0)
@@ -314,11 +337,152 @@ class AiqCase(unittest.TestCase):
         time.sleep(1.5)
         self.assertEqual(beat.stat().st_mtime, first, "子行程沒被殺掉，還在跳心跳")
 
+    def test_requeue_rechecks_live_read_write_conflicts(self):
+        first = self.add("first", write=("same.md",))
+        self.aiq("fail", first, "--result", "stopped")
+        second = self.add("second", write=("same.md",))
+        self.aiq("claim", "--id", second, "--worker", "w")
+        self.assertEqual(self.aiq("requeue", first)[0], 2)
+        self.assertEqual(self.row(first)["status"], "failed")
+        # A stale/legacy queued row must also be blocked at the claim boundary.
+        with self.db() as con:
+            con.execute("UPDATE tasks SET status='queued' WHERE id=?", (first,))
+        rc, out, _ = self.aiq("claim", "--id", first, "--json")
+        self.assertIsNone(json.loads(out)["claimed"])
+
+    def test_ordered_overlap_can_resume_before_queued_dependent(self):
+        first = self.add("first")
+        second = self.add("second", "--depends-on", first)
+        self.aiq("fail", first, "--result", "retry")
+        self.assertEqual(self.aiq("requeue", first)[0], 0)
+        rc, out, _ = self.aiq("claim", "--id", first, "--json")
+        self.assertEqual(json.loads(out)["claimed"]["id"], first)
+        self.aiq("done", first, "--result", "ok")
+        rc, out, _ = self.aiq("claim", "--id", second, "--json")
+        self.assertEqual(json.loads(out)["claimed"]["id"], second)
+
+    def test_release_keeps_progress_and_fences_old_holder(self):
+        tid = self.add("handoff")
+        rc, out, _ = self.aiq("claim", "--id", tid, "--worker", "claude", "--json")
+        token = json.loads(out)["claimed"]["claim_token"]
+        rc, out, err = self.aiq("release", tid, "--token", token, "--done", "draft saved", "--remaining", "verify", "--notes", "use existing draft")
+        self.assertEqual(rc, 0, err)
+        rc, out, _ = self.aiq("claim", "--id", tid, "--worker", "codex", "--json")
+        claim = json.loads(out)["claimed"]
+        self.assertIn("done --token", claim["instructions"])
+        self.assertIn("draft saved", claim["instructions"])
+        self.assertIn("verify", claim["instructions"])
+        self.assertEqual(self.aiq("checkpoint", tid, "--token", token, "--remaining", "old")[0], 2)
+        self.assertEqual(self.aiq("done", tid, "--token", token, "--result", "old")[0], 2)
+        self.assertEqual(self.aiq("done", tid, "--token", claim["claim_token"], "--result", "verified")[0], 0)
+
+    def test_finish_requires_running_receipt_and_cancel_cannot_stop_holder(self):
+        tid = self.add("guard")
+        self.assertEqual(self.aiq("done", tid, "--token", "fake", "--result", "x")[0], 2)
+        rc, out, _ = self.aiq("claim", "--id", tid, "--json")
+        token = json.loads(out)["claimed"]["claim_token"]
+        self.assertEqual(self.aiq("cancel", tid, "--result", "x")[0], 2)
+        self.assertEqual(self.aiq("done", tid, "--token", token, "--result", "  ")[0], 2)
+        self.assertEqual(self.row(tid)["status"], "running")
+
+    def test_nonzero_or_empty_result_cannot_complete(self):
+        env = self.install_fake_engines("claude")
+        for mode in ("nonzero", "empty"):
+            env["AIQ_FAKE_MODE"] = mode
+            tid = self.add(mode, "--engine", "claude", write=(mode + ".txt",))
+            self.aiq("run", env=env)
+            self.assertEqual(self.row(tid)["status"], "needs_decision")
+
+    @unittest.skipIf(shutil.which("git") is None, "沒有 git")
+    def test_interactive_done_detects_preexisting_dirty_stray(self):
+        subprocess.run(["git", "init", "-q"], cwd=self.tmp, check=True, capture_output=True)
+        stray = self.tmp / "unrelated.txt"
+        stray.write_text("user draft", encoding="utf8")
+        tid = self.add("edit", write=("allowed.txt",))
+        rc, out, _ = self.aiq("claim", "--id", tid, "--json")
+        token = json.loads(out)["claimed"]["claim_token"]
+        stray.write_text("overwritten", encoding="utf8")
+        self.aiq("done", tid, "--token", token, "--result", "x")
+        self.assertEqual(self.row(tid)["status"], "needs_decision")
+        self.assertIn("unrelated.txt", self.row(tid)["result"])
+
+    def test_install_is_repeatable_preserves_rules_tasks_and_markers(self):
+        (self.tmp / "CLAUDE.md").write_text("owner rules", encoding="utf8")
+        tid = self.add("real pending", write=("real.txt",))
+        self.assertEqual(self.aiq("install")[0], 0)
+        snapshots = {n: (self.tmp / n).read_bytes() for n in ("AIQ.md", "CLAUDE.md", "AGENTS.md")}
+        self.assertEqual(self.aiq("install")[0], 0)
+        for name, data in snapshots.items():
+            self.assertEqual(data, (self.tmp / name).read_bytes())
+            self.assertEqual(data.count(b"<!-- AIQ:BEGIN -->"), 1)
+            self.assertIn(b"claim_token", data)
+        self.assertTrue((self.tmp / "CLAUDE.md").read_text(encoding="utf8").startswith("owner rules"))
+        self.assertEqual(self.row(tid)["status"], "queued")
+        self.assertTrue(list((self.tmp / ".aiq/install-backups").glob("*/CLAUDE.md")))
+
+    def test_legacy_database_migrates_without_unlocking(self):
+        tid = self.add("legacy")
+        # Recreate exactly the old schema with only original columns.
+        with self.db() as con:
+            con.execute("ALTER TABLE tasks DROP COLUMN claim_token")
+            con.execute("ALTER TABLE tasks DROP COLUMN started_at")
+            con.execute("ALTER TABLE tasks DROP COLUMN before_state")
+            con.execute("UPDATE tasks SET status='running', lease_owner='old', lease_until='2000-01-01', attempt=1 WHERE id=?", (tid,))
+        self.assertEqual(self.aiq("status")[0], 0)
+        rc, out, _ = self.aiq("claim", "--json")
+        self.assertIsNone(json.loads(out)["claimed"])
+        self.assertEqual(self.row(tid)["lease_owner"], "old")
+        self.assertEqual(self.aiq("requeue", tid, "--stopped", "--attempt", "1")[0], 0)
+
+    @unittest.skipIf(shutil.which("git") is None, "沒有 git")
+    def test_rename_cannot_hide_removal_of_out_of_scope_original(self):
+        subprocess.run(["git", "init", "-q"], cwd=self.tmp, check=True, capture_output=True)
+        (self.tmp / "outside.txt").write_text("user content", encoding="utf8")
+        subprocess.run(["git", "add", "outside.txt"], cwd=self.tmp, check=True, capture_output=True)
+        subprocess.run(["git", "-c", "user.name=AIQ Test", "-c", "user.email=aiq@example.invalid",
+                        "-c", "commit.gpgsign=false", "commit", "-qm", "fixture baseline"],
+                       cwd=self.tmp, check=True, capture_output=True)
+        tid = self.add("rename", write=("allowed.txt",))
+        rc, out, _ = self.aiq("claim", "--id", tid, "--json")
+        token = json.loads(out)["claimed"]["claim_token"]
+        subprocess.run(["git", "mv", "outside.txt", "allowed.txt"], cwd=self.tmp, check=True, capture_output=True)
+        self.aiq("done", tid, "--token", token, "--result", "renamed")
+        self.assertEqual(self.row(tid)["status"], "needs_decision")
+        self.assertIn("outside.txt", self.row(tid)["result"])
+
+    def test_fake_engine_works_in_unicode_space_temp_path(self):
+        parent, original_script = self.tmp, self.script
+        nested = parent / "中文 空白測試"
+        nested.mkdir()
+        self.tmp, self.script = nested, nested / "aiq.py"
+        shutil.copy(AIQ_SRC, self.script)
+        try:
+            env = self.install_fake_engines("claude")
+            env["AIQ_FAKE_WRITE"] = "中文報告.txt"
+            tid = self.add("unicode", "--engine", "claude", write=("中文報告.txt",), env=env)
+            rc, out, err = self.aiq("run", env=env)
+            self.assertEqual(rc, 0, out + err)
+            self.assertEqual(self.row(tid)["status"], "done")
+            self.assertEqual((nested / "中文報告.txt").read_text(encoding="utf8"), "hi\n")
+        finally:
+            self.tmp, self.script = parent, original_script
+
+    def test_status_show_do_not_advertise_other_holders_token(self):
+        tid = self.add("private claim")
+        rc, out, _ = self.aiq("claim", "--id", tid, "--json")
+        claim = json.loads(out)["claimed"]
+        self.assertTrue(claim["claim_token"])
+        for args in [("status", "--json"), ("show", tid, "--json")]:
+            rc, out, _ = self.aiq(*args)
+            self.assertNotIn(claim["claim_token"], out)
+            self.assertNotIn("before_state", out)
+
     def test_status_and_help(self):
         a = self.add("one", write=("1.txt",))
         rc, out, _ = self.aiq("status")
         self.assertIn("queued=1", out)
         self.assertIn(a, out)
+        self.assertIn("1.txt", out)
         rc, out, _ = self.aiq("status", "--json")
         self.assertEqual(json.loads(out)["counts"]["queued"], 1)
         for cmd in ([], ["add"], ["claim"], ["run"], ["hook"], ["status"], ["done"], ["fail"], ["requeue"]):

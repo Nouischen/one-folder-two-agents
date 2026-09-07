@@ -8,7 +8,7 @@
     python aiq.py add "標題" --prompt "要做什麼，含驗收條件" --write 路徑 [--engine claude|codex|auto]
     python aiq.py run --worker 我           # 搶一件交給引擎做；加 --loop 做到佇列空為止
     python aiq.py hook                      # 掛在對話 hook 上，把未讀結果注入下一句話
-    python aiq.py status | claim | done | fail | requeue
+    python aiq.py install | status | claim | checkpoint | release | done | fail | requeue
 
 最小版做不到的：暫存區寫入、整波 SHA-256 盤點、另一引擎新鮮審查、儀表板、多台電腦。
 寫入範圍靠宣告與事後 git 檢查，不靠強制隔離。
@@ -41,7 +41,7 @@ STATUSES = ("queued", "running", "done", "failed", "needs_decision")
 PROMPT_INLINE_LIMIT = 8000  # prompt 超過這個長度就改成「請先讀 prompt.md」
 HOOK_BATCH = 5
 RESULT_PREVIEW = 800
-DEFAULT_LEASE = 900
+DEFAULT_LEASE = 0  # Time alone never proves that an interactive writer stopped.
 DEFAULT_TIMEOUT = 3600
 
 # 子行程要剝掉的環境變數：
@@ -85,6 +85,7 @@ PROMPT_TEMPLATE = """你正在處理佇列任務 {id}：{title}
 目標與驗收條件：
 {prompt}
 規則：
+- {ownership_rule}
 - 只能修改這些路徑：{write_scope}，加上你自己的紀錄夾 .aiq/tasks/{id}/（下面兩個檔就放這裡，寫它們不算違規）。其他檔案只能讀，不能寫、不能刪、不能改名。
 - 每完成一個里程碑，把進度整檔覆寫到 {checkpoint}，格式 {{"done": [...], "remaining": [...], "notes": "..."}}。
 - 上一次的進度（如果有）：{checkpoint_content}。已記錄為 done 的視為做完，驗證後接著做 remaining。
@@ -119,8 +120,11 @@ def task_dir(task_id: str) -> Path:
     return TASKS_DIR / task_id
 
 
-def task_dict(row: sqlite3.Row) -> dict:
+def task_dict(row: sqlite3.Row, *, include_token: bool = False) -> dict:
     d = dict(row)
+    d.pop("before_state", None)  # Internal Git baseline is not useful in list/show output.
+    if not include_token:
+        d.pop("claim_token", None)
     for key in ("read_scope", "write_scope", "depends_on"):
         d[key] = json.loads(d[key])
     d["checkpoint_path"] = rel(task_dir(d["id"]) / "checkpoint.json")
@@ -145,6 +149,17 @@ def open_db() -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA busy_timeout=5000")
     con.execute(SCHEMA)
+    # Preserve old tasks while upgrading. Legacy running tasks remain reserved.
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        columns = {r[1] for r in con.execute("PRAGMA table_info(tasks)")}
+        for name in ("claim_token", "started_at", "before_state"):
+            if name not in columns:
+                con.execute(f"ALTER TABLE tasks ADD COLUMN {name} TEXT")
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
     return con
 
 
@@ -193,8 +208,8 @@ def norm_scope(raw: str) -> str:
             parts.append(part)
     if not parts:
         raise Usage(f"拒收路徑 {raw!r}：不能把整個專案資料夾當範圍")
-    if parts[0] == ".aiq":
-        raise Usage(f"拒收路徑 {raw!r}：.aiq 是佇列自己的資料夾")
+    if parts[0].casefold() in (".aiq", ".git"):
+        raise Usage(f"拒收路徑 {raw!r}：.aiq／.git 是保留的管理資料夾")
     return "/".join(parts)
 
 
@@ -284,6 +299,9 @@ def _add_locked(con, a, writes: list[str], reads: list[str], deps: list[str]) ->
         (task_id, a.title, a.prompt or a.title, a.work_key, a.engine, dumps(reads), dumps(writes),
          dumps(deps), iso(utcnow())))
     task_dir(task_id).mkdir(parents=True, exist_ok=True)
+    (task_dir(task_id) / "checkpoint.json").write_text(dumps({
+        "goal": a.prompt or a.title, "done": [], "remaining": [a.prompt or a.title], "notes": "尚未開始"
+    }), encoding="utf-8")
     ensure_gitignore()
     out(a, {"ok": True, "id": task_id, "existing": False, "task": task_dict(fetch(con, task_id))},
         f"已登記 {task_id}：{a.title}（engine={a.engine}，write={', '.join(writes)}）")
@@ -291,56 +309,71 @@ def _add_locked(con, a, writes: list[str], reads: list[str], deps: list[str]) ->
 
 
 def recover_expired(con) -> list[str]:
-    """租約過期的 running 任務改回 queued，attempt 不動。"""
-    now = iso(utcnow())
-    ids = [r["id"] for r in con.execute(
-        "SELECT id FROM tasks WHERE status='running' AND lease_until < ?", (now,)).fetchall()]
-    for task_id in ids:
-        con.execute("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL "
-                    "WHERE id=? AND status='running' AND lease_until < ?", (task_id, now))
-    return ids
+    """Time expiry is advisory. Only release or confirmed stopped recovery unlocks work."""
+    return []
 
+
+def scope_conflicts(con, row, *, running_only=False) -> list[str]:
+    """Call under BEGIN IMMEDIATE; ordered queued tasks may coexist, running writers cannot."""
+    related = dep_closure(con, json.loads(row["depends_on"]))
+    bad = []
+    peers = con.execute("SELECT * FROM tasks WHERE id<>? AND status IN ('queued','running')",
+                        (row["id"],)).fetchall()
+    for peer in peers:
+        if peer["status"] == "queued":
+            if running_only or peer["id"] in related or row["id"] in dep_closure(con, json.loads(peer["depends_on"])):
+                continue
+        pairs = (("write_scope", "write_scope"), ("write_scope", "read_scope"), ("read_scope", "write_scope"))
+        if any(overlaps(a, b) for left, right in pairs
+               for a in json.loads(row[left]) for b in json.loads(peer[right])):
+            bad.append(peer["id"])
+    return bad
+
+
+def owned(con, task_id, token):
+    row = fetch(con, task_id)
+    if row is None or row["status"] != "running" or not token or row["claim_token"] != token:
+        raise Usage("這次領取已失效或沒有領取憑證；先查 status，不能替其他執行者結案")
+    return row
 
 def claim_one(con, worker: str, lease_seconds: int, only_id: str | None = None) -> sqlite3.Row | None:
-    """在 BEGIN IMMEDIATE 交易裡挑一件可做的，用條件 UPDATE 搶；更新到 0 列就重選。
-
-    only_id 指定時只搶那一件：對話裡的 AI 要自己動手做之前，先用它把任務變成
-    running，另一邊才看得出來「這件有人在做」，不會兩邊同時做同一件。
-    """
-    for _ in range(20):
-        con.execute("BEGIN IMMEDIATE")
-        try:
-            done = {r["id"] for r in con.execute("SELECT id FROM tasks WHERE status='done'").fetchall()}
-            pick = None
-            for r in con.execute("SELECT id, depends_on FROM tasks WHERE status='queued' "
-                                 "ORDER BY created_at, id").fetchall():
-                if only_id is not None and r["id"] != only_id:
-                    continue
-                if all(dep in done for dep in json.loads(r["depends_on"])):
-                    pick = r["id"]
-                    break
-            if pick is None:
-                con.execute("COMMIT")
-                return None
-            until = iso(utcnow() + timedelta(seconds=lease_seconds))
-            cur = con.execute(
-                "UPDATE tasks SET status='running', lease_owner=?, lease_until=?, attempt=attempt+1 "
-                "WHERE id=? AND status='queued'", (worker, until, pick))
+    if lease_seconds < 0:
+        raise Usage("lease-seconds 不能小於 0；0 表示不設提醒期限")
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        done = {r["id"] for r in con.execute("SELECT id FROM tasks WHERE status='done'")}
+        pick = None
+        for row in con.execute("SELECT * FROM tasks WHERE status='queued' ORDER BY created_at, id").fetchall():
+            if only_id is not None and row["id"] != only_id:
+                continue
+            if all(dep in done for dep in json.loads(row["depends_on"])) and not scope_conflicts(con, row, running_only=True):
+                pick = row["id"]
+                break
+        if pick is None:
             con.execute("COMMIT")
-        except BaseException:
-            if con.in_transaction:
-                con.execute("ROLLBACK")
-            raise
-        if cur.rowcount == 1:
-            return fetch(con, pick)
-    return None
-
+            return None
+        until = iso(utcnow() + timedelta(seconds=lease_seconds)) if lease_seconds else None
+        before = git_status()
+        baseline = dumps({"paths": sorted(before) if before is not None else None, "hashes": dirty_hashes(before)})
+        con.execute("UPDATE tasks SET status='running', lease_owner=?, lease_until=?, attempt=attempt+1, "
+                    "claim_token=?, started_at=?, before_state=?, result=NULL, finished_at=NULL "
+                    "WHERE id=? AND status='queued'",
+                    (worker, until, secrets.token_hex(16), iso(utcnow()), baseline, pick))
+        result = fetch(con, pick)
+        con.execute("COMMIT")
+        return result
+    except BaseException:
+        if con.in_transaction:
+            con.execute("ROLLBACK")
+        raise
 
 def cmd_claim(a) -> int:
     con = open_db()
     recovered = recover_expired(con)
     row = claim_one(con, a.worker, a.lease_seconds, a.id)
-    claimed = task_dict(row) if row is not None else None
+    claimed = task_dict(row, include_token=True) if row is not None else None
+    if claimed is not None:
+        claimed["instructions"] = build_prompt(row, background=False)
     if a.json:
         print(dumps({"claimed": claimed, "recovered": recovered}))
         return 0
@@ -399,14 +432,16 @@ def pick_engine(con, task: sqlite3.Row, found: dict[str, str | None],
     return prefer if prefer in avail else avail[0]
 
 
-def build_prompt(task: sqlite3.Row) -> str:
+def build_prompt(task: sqlite3.Row, background: bool = True) -> str:
     tdir = task_dir(task["id"])
     checkpoint = tdir / "checkpoint.json"
     content = "（無）"
     if checkpoint.exists():
         content = checkpoint.read_text(encoding="utf-8", errors="replace").strip() or "（無）"
+    ownership = ("這件任務已由 run 領取；不用再 add／claim／done，只需寫進度與結果檔。" if background else
+                 "你已成功領取；保存本次 claim_token。每個里程碑用 checkpoint，完成後用 done --token 本次憑證結案。交接先停手再 release。")
     return PROMPT_TEMPLATE.format(
-        id=task["id"], title=task["title"], prompt=task["prompt"],
+        ownership_rule=ownership, id=task["id"], title=task["title"], prompt=task["prompt"],
         write_scope="、".join(json.loads(task["write_scope"])),
         checkpoint=rel(checkpoint), checkpoint_content=content, result=rel(tdir / "result.md"))
 
@@ -447,12 +482,14 @@ def git_status() -> set[str] | None:
     paths: set[str] = set()
     skip = False
     for entry in st.stdout.split("\0"):
-        if skip:  # rename / copy 的下一格是舊路徑
+        if skip:  # rename / copy 的下一格是原路徑；移走原檔也是寫入。
             skip = False
+            if entry.startswith(prefix):
+                paths.add(entry[len(prefix):])
             continue
         if len(entry) < 4:
             continue
-        skip = entry[0] in "RC"
+        skip = any(code in "RC" for code in entry[:2])
         path = entry[3:]
         if path.startswith(prefix):
             paths.add(path[len(prefix):])
@@ -493,30 +530,32 @@ def strays(before: set[str] | None, after: set[str] | None, write_scope: list[st
 
 
 def kill_tree(proc: subprocess.Popen) -> None:
-    """殺掉子行程整棵樹：Windows 用 taskkill /T /F，其他平台 killpg（子行程開在自己的 session）。"""
+    """Stop the process tree, or retain running ownership if termination is uncertain."""
     if proc.poll() is not None:
         return
     if os.name == "nt":
         try:
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], stdin=subprocess.DEVNULL,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
-                           creationflags=NO_WINDOW)
-        except (OSError, subprocess.SubprocessError):
-            pass
+            result = subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], stdin=subprocess.DEVNULL,
+                                    capture_output=True, timeout=30, creationflags=NO_WINDOW)
+            if result.returncode != 0:
+                raise Usage("無法確認子行程樹已停止，保留 running 占用；確認停止後再接手")
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise Usage("停止子行程失敗，保留 running 占用") from exc
     else:
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (OSError, ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
             pass
+        except OSError as exc:
+            raise Usage("停止子行程群組失敗，保留 running 占用") from exc
     try:
         proc.wait(timeout=15)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+    except subprocess.TimeoutExpired as exc:
+        raise Usage("無法確認引擎已停止，保留 running 占用") from exc
 
-
-def requeue_task(con, task_id: str) -> None:
-    con.execute("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL WHERE id=?", (task_id,))
-
+def requeue_task(con, row) -> None:
+    con.execute("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, claim_token=NULL "
+                "WHERE id=? AND status='running' AND claim_token=?", (row["id"], row["claim_token"]))
 
 def peer_write_scopes(con, task_id: str, started_iso: str) -> list[str]:
     """這次執行期間，其他任務合法宣告過的 write_scope。
@@ -540,15 +579,19 @@ def finalize(con, row: sqlite3.Row, engine: str, rc: int, before: set[str] | Non
     task_id = row["id"]
     tdir = task_dir(task_id)
     result_path = tdir / "result.md"
-    if result_path.exists():
+    if rc == 0 and result_path.exists() and result_path.read_text(encoding="utf-8", errors="replace").strip():
         status = "done"
         result = result_path.read_text(encoding="utf-8", errors="replace").strip()
     else:
         status = "needs_decision"
-        result = f"引擎結束但沒有寫結果檔（exit code {rc}，輸出見 {rel(tdir / 'engine.log')}）"
+        result = f"引擎未成功完成或沒有非空結果檔（exit code {rc}，輸出見 {rel(tdir / 'engine.log')}）"
     allowed = json.loads(row["write_scope"]) + peer_write_scopes(con, task_id, started_iso)
-    bad = strays(before, git_status(), allowed, before_hashes)
-    if bad:
+    after = git_status()
+    bad = strays(before, after, allowed, before_hashes)
+    if before is not None and after is None:
+        status = "needs_decision"
+        result += "\nGit 事後檢查失敗，請先檢查檔案再結案"
+    elif bad:
         status = "needs_decision"
         result += "\n\n越界改動：" + "、".join(bad) + "，請使用者檢查"
     elif before is None:
@@ -556,10 +599,10 @@ def finalize(con, row: sqlite3.Row, engine: str, rc: int, before: set[str] | Non
                    "引擎有沒有改到範圍外的檔，程式無法判斷。）")
     cur = con.execute(
         "UPDATE tasks SET status=?, result=?, finished_at=?, delivered=0, engine_used=?, "
-        "lease_owner=NULL, lease_until=NULL WHERE id=? AND status='running' AND lease_owner=?",
-        (status, result, iso(utcnow()), engine, task_id, row["lease_owner"]))
+        "lease_owner=NULL, lease_until=NULL, claim_token=NULL WHERE id=? AND status='running' AND claim_token=?",
+        (status, result, iso(utcnow()), engine, task_id, row["claim_token"]))
     if cur.rowcount != 1:
-        result = "（租約已被別的 worker 接手，這次的結果沒有寫回資料庫）\n" + result
+        raise Usage("這次領取已失效，結果沒有寫回；請查 status 確認目前持有人")
     return status, result
 
 
@@ -569,7 +612,7 @@ def run_once(a) -> str:
     recovered = recover_expired(con)
     for task_id in recovered:
         say(a, f"回收了 {task_id}")
-    row = claim_one(con, a.worker, a.timeout_seconds + 60)  # 租約蓋過整段執行，做到一半不會被搶走
+    row = claim_one(con, a.worker, a.timeout_seconds + 60)  # 記錄期限；不靠時間自動交接
     if row is None:
         out(a, {"claimed": None, "recovered": recovered}, "沒有可搶的")
         return "empty"
@@ -577,7 +620,7 @@ def run_once(a) -> str:
     found = find_engines()
     engine = pick_engine(con, row, found, a.engine)
     if engine is None:
-        requeue_task(con, task_id)
+        requeue_task(con, row)
         msg = ("這台電腦沒有 claude 也沒有 codex" if not any(found.values())
                else f"這台電腦沒有 {row['engine']}，任務已放回佇列")
         out(a, {"id": task_id, "status": "queued", "error": "no_engine", "message": msg}, msg)
@@ -590,7 +633,7 @@ def run_once(a) -> str:
     env, removed = child_env()
     stripped = not any(is_stripped(k) for k in env)
     if a.dry_run:
-        requeue_task(con, task_id)
+        requeue_task(con, row)
         info = {"id": task_id, "engine": engine, "command": argv, "cwd": str(ROOT), "stripped": stripped,
                 "removed_env": removed, "prompt_file": rel(tdir / "prompt.md"), "status": "queued"}
         out(a, info, "\n".join([
@@ -623,20 +666,21 @@ def run_once(a) -> str:
         try:
             proc = subprocess.Popen(argv, stdout=log, **popen_kw)
         except OSError as exc:
-            requeue_task(con, task_id)
+            requeue_task(con, row)
             raise Usage(f"啟動 {engine} 失敗：{exc}") from exc
         try:
             rc = proc.wait(timeout=a.timeout_seconds)
         except subprocess.TimeoutExpired:
             kill_tree(proc)
-            requeue_task(con, task_id)
-            out(a, {"id": task_id, "status": "queued", "error": "timeout", "engine": engine},
-                f"{task_id} 逾時（{a.timeout_seconds}s），已殺掉子行程並放回佇列，checkpoint 保留")
+            con.execute("UPDATE tasks SET status='needs_decision', result=?, finished_at=?, delivered=0, "
+                        "lease_owner=NULL, lease_until=NULL, claim_token=NULL WHERE id=? AND claim_token=?",
+                        ("執行逾時，子行程已停止；先讀進度與現有檔案，確認可續作再 requeue", iso(utcnow()), task_id, row["claim_token"]))
+            out(a, {"id": task_id, "status": "needs_decision", "error": "timeout", "engine": engine},
+                f"{task_id} 逾時（{a.timeout_seconds}s），已停止子行程，進度保留；檢查後再續作")
             return "timeout"
         except KeyboardInterrupt:
             kill_tree(proc)
-            requeue_task(con, task_id)
-            say(a, f"中斷：{task_id} 已放回佇列")
+            say(a, f"中斷：{task_id} 子行程已停止；讀進度後以 requeue --stopped --attempt {row['attempt']} 接手")
             raise
     elapsed = round(time.monotonic() - started, 1)
     status, result = finalize(con, row, engine, rc, before, started_iso, before_hashes)
@@ -646,9 +690,11 @@ def run_once(a) -> str:
 
 
 def cmd_run(a) -> int:
+    if a.timeout_seconds <= 0:
+        raise Usage("timeout-seconds 必須大於 0")
     while True:
         outcome = run_once(a)
-        if not a.loop or outcome not in ("done", "needs_decision"):
+        if not a.loop or outcome != "done":
             return 0
 
 
@@ -705,21 +751,41 @@ def cmd_status(a) -> int:
     for r in rows:
         used = f"→{r['engine_used']}" if r["engine_used"] and r["engine_used"] != r["engine"] else ""
         print(f"{r['id']}  {r['status']:<14}  {r['engine'] + used:<13}  {r['title']}")
+        print(f"  寫：{', '.join(json.loads(r['write_scope'])) or '(無)'}  讀：{', '.join(json.loads(r['read_scope'])) or '(無)'}")
+        if r["status"] == "running":
+            print(f"  持有人：{r['lease_owner']}  第 {r['attempt']} 次；確認停手前不會自動轉交")
     return 0
 
 
 def cmd_finish(a) -> int:
-    """done / fail：手動結案，人或 AI 都能用。"""
+    """Only this attempt's holder may finish; interactive work also gets a Git check."""
     con = open_db()
-    if fetch(con, a.id) is None:
-        raise Usage(f"沒有這件任務：{a.id}")
+    con.execute("BEGIN IMMEDIATE")
+    row = owned(con, a.id, a.token)
+    if not a.result.strip():
+        raise Usage("結果摘要不能是空白")
     status = "done" if a.cmd == "done" else "failed"
+    baseline = json.loads(row["before_state"] or "{}")
+    before = set(baseline["paths"]) if baseline.get("paths") is not None else None
+    allowed = json.loads(row["write_scope"]) + peer_write_scopes(con, a.id, row["started_at"] or iso(utcnow()))
+    after = git_status()
+    bad = strays(before, after, allowed, baseline.get("hashes"))
+    result = a.result
+    if before is not None and after is None:
+        status = "needs_decision"
+        result += "\nGit 事後檢查失敗，請先檢查檔案再結案"
+    elif bad:
+        status = "needs_decision"
+        result += "\n越界改動：" + "、".join(bad) + "，請檢查"
+    elif before is None:
+        result += "\n（沒有 Git 基準，未做越界檢查）"
+    (task_dir(a.id) / "result.md").write_text(result, encoding="utf-8")
     con.execute("UPDATE tasks SET status=?, result=?, finished_at=?, delivered=0, lease_owner=NULL, "
-                "lease_until=NULL, engine_used=COALESCE(?, engine_used) WHERE id=?",
-                (status, a.result, iso(utcnow()), a.by, a.id))
-    out(a, {"ok": True, "id": a.id, "status": status}, f"{a.id} → {status}")
+                "lease_until=NULL, claim_token=NULL, engine_used=COALESCE(?, engine_used) WHERE id=?",
+                (status, result, iso(utcnow()), a.by, a.id))
+    con.execute("COMMIT")
+    out(a, {"ok": True, "id": a.id, "status": status, "result": result}, f"{a.id} → {status}")
     return 0
-
 
 def cmd_show(a) -> int:
     """把一件任務的完整內容與結果再印一次；hook 送過之後也還讀得到。"""
@@ -744,18 +810,127 @@ def cmd_show(a) -> int:
 
 def cmd_requeue(a) -> int:
     con = open_db()
+    con.execute("BEGIN IMMEDIATE")
     row = fetch(con, a.id)
     if row is None:
         raise Usage(f"沒有這件任務：{a.id}")
-    if row["status"] not in ("needs_decision", "failed"):
-        raise Usage(f"{a.id} 目前是 {row['status']}，只有 needs_decision 或 failed 能 requeue")
-    con.execute("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, finished_at=NULL "
+    if row["status"] == "running":
+        if not a.stopped or a.attempt != row["attempt"]:
+            raise Usage("先確認舊對話／引擎已停止，再帶 --stopped --attempt <目前次數>；時間經過不能證明停手")
+    elif row["status"] not in ("needs_decision", "failed"):
+        raise Usage(f"{a.id} 目前是 {row['status']}，只有 needs_decision 或 failed 能直接 requeue")
+    bad = scope_conflicts(con, row)
+    if bad:
+        raise Usage("範圍衝突，先等這些任務完成：" + "、".join(bad))
+    con.execute("UPDATE tasks SET status='queued', lease_owner=NULL, lease_until=NULL, claim_token=NULL, finished_at=NULL "
                 "WHERE id=?", (a.id,))
+    con.execute("COMMIT")
     out(a, {"ok": True, "id": a.id, "status": "queued"}, f"{a.id} → queued")
     return 0
 
 
+def cmd_checkpoint(a) -> int:
+    con = open_db()
+    con.execute("BEGIN IMMEDIATE")
+    row = owned(con, a.id, a.token)
+    checkpoint = {"goal": row["prompt"], "done": a.done, "remaining": a.remaining, "notes": a.notes}
+    path = task_dir(a.id) / "checkpoint.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(dumps(checkpoint), encoding="utf-8")
+    tmp.replace(path)
+    if a.cmd == "release":
+        requeue_task(con, row)
+    con.execute("COMMIT")
+    out(a, {"ok": True, "id": a.id, "checkpoint": checkpoint}, "進度已保存" + ("，已交回清單；請停止修改" if a.cmd == "release" else ""))
+    return 0
+
+
+def cmd_cancel(a) -> int:
+    con = open_db()
+    cur = con.execute("UPDATE tasks SET status='failed', result=?, finished_at=?, delivered=0 WHERE id=? AND status='queued'",
+                      (a.result, iso(utcnow()), a.id))
+    if cur.rowcount != 1:
+        raise Usage("cancel 只能取消尚未領取的 queued 任務；不能中斷其他持有人")
+    out(a, {"ok": True, "id": a.id, "status": "failed"}, "已取消尚未開始的任務")
+    return 0
+
+
 # ---------------------------------------------------------------- 命令列
+
+RULE_START = "<!-- AIQ:BEGIN -->"
+RULE_END = "<!-- AIQ:END -->"
+
+
+def installed_rules() -> str:
+    import shlex
+    argv = [sys.executable, str(ROOT / "aiq.py")]
+    command = ("& " + " ".join("'" + x.replace("'", "''") + "'" for x in argv)
+               if os.name == "nt" else shlex.join(argv))
+    return f'''## 共用待辦清單：所有會修改檔案的工作，先登記再領取
+清單位於 {ROOT}；Claude Code 與 Codex 都使用同一份。
+指令前綴（Windows 用 PowerShell）：`{command}`；下文 Q 代表此前綴，不是另一個指令。
+
+1. 動手前先 `Q status --json`，依 read_scope／write_scope 比對，不能只看標題。
+   使用者只需說要做什麼，範圍由 AI 看檔案後自行判斷，不要求他背暗號或指定檔名。
+   若已有同一件 queued 工作且使用者說繼續，讀 `Q show ID --json` 後領取原任務。
+   若 queued 是不同工作，說明差異；需要排序就 add --depends-on ID。要取消且已獲授權，用 cancel。
+   running 表示有人占用；改做不衝突的工作。不能因為時間已過就接管。
+2. 沒有相同任務才 `Q add "標題" --prompt "完整目標、背景、驗收條件" --write <相對路徑> --read <必要參考> --json`。
+   不需要讀取範圍就省略 --read。路徑相對於清單根目錄；不能用 .、.aiq、.git。
+3. 在目前對話自己做：`Q claim --id ID --worker claude或codex --json`。
+   **只有 claimed 非 null 才能開始修改。保留這次的 claim_token；不要使用 show 查到的別人的 token。**
+   讀取回傳的 instructions 及 checkpoint，驗證已完成項目後接著做。不能先改再登記。
+4. 每完成一段就 `Q checkpoint ID --token TOKEN --done "已完成與驗證" --remaining "下一步" --notes "決策、檔案與卡點"`。
+   要換手，先停止所有寫入及子行程，再 `Q release ID --token TOKEN --done "已完成" --remaining "下一步" --notes "交接說明"`；成功後不可繼續改檔。
+   若舊對話已中斷而無法 release，先看 show、checkpoint 與現有檔案，確認舊引擎已停止。
+   停手證據不足才問使用者是否已停止舊對話；確認後 `Q requeue ID --stopped --attempt <目前 attempt>`，再重新 claim。
+   沒有記下的進度不會自動復原；不要假裝拿到了完整聊天紀錄。
+5. 驗證完成才 `Q done ID --token TOKEN --by claude或codex --result "成果、驗證、限制"`。
+   無法完成用 `Q fail ID --token TOKEN --result "卡點及已做的事"`。讀回結果狀態；needs_decision 不能宣稱完成。
+   需要重試先檢查副作用與檔案，再 requeue；沒有證據不可盲目重做發布／寄送等外部動作。
+6. 背景 run 只在使用者要求時使用，它會再啟動一個引擎。若你已收到 .aiq/tasks/ID/prompt.md 的派工，
+   該任務已由 run 領取；依 prompt 修改宣告範圍、保存進度與 result.md，不再 add／claim／done／release 同一件。
+7. 結果可用 `Q show ID` 隨時讀回。hook 是選配；已接時由同資料夾下一個觸發 hook 的對話讀到，沒有原對話定址。
+這是合作規則，並非檔案鎖。Git 檢查是事後提示，不會復原改動；Git 忽略檔及並行修改無法完整歸因。
+'''
+
+
+def cmd_install(a) -> int:
+    """Install repeatable project rules with markers, preserving all other instructions."""
+    if ROOT.parent == ROOT or ROOT in (Path.home().resolve(), (Path.home() / "Desktop").resolve()):
+        raise Usage("請選專用工作區或單一專案，不能直接裝在家目錄或桌面")
+    open_db().close()
+    rules = installed_rules()
+    block = RULE_START + "\n" + rules + RULE_END
+    planned = []
+    for name in ("AIQ.md", "CLAUDE.md", "AGENTS.md"):
+        path = ROOT / name
+        old = path.read_text(encoding="utf-8") if path.exists() else ""
+        if RULE_START in old or RULE_END in old:
+            if old.count(RULE_START) != 1 or old.count(RULE_END) != 1 or old.index(RULE_START) > old.index(RULE_END):
+                raise Usage(f"{name} 的 AIQ 標記不完整，請保留原文並修復標記後重試")
+            start = old.index(RULE_START)
+            end = old.index(RULE_END) + len(RULE_END)
+            content = old[:start] + block + old[end:]
+        elif old and (name == "AIQ.md" or "aiq.py" in old):
+            raise Usage(f"{name} 有舊版未標記說明；先備份，由 AI 只移除舊 AIQ 段落、保留個人規則，再 install")
+        else:
+            content = old + ("\n\n" if old else "") + block + "\n"
+        if content != old:
+            planned.append((path, old, content))
+    backup = AIQ_DIR / "install-backups" / (utcnow().strftime("%Y%m%dT%H%M%S") + "-" + secrets.token_hex(3))
+    for path, old, content in planned:
+        if path.exists():
+            backup.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, backup / path.name)
+        tmp = path.with_name(path.name + ".aiq-tmp")
+        tmp.write_text(content, encoding="utf-8")
+        tmp.replace(path)
+    ensure_gitignore()
+    out(a, {"ok": True, "updated": [p.name for p, _, _ in planned], "hooks_installed": False},
+        "共用規則已安裝／更新；個人規則與任務保留。Hook 是選配，尚未修改全域設定。")
+    return 0
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="aiq.py", description="最小版本機任務佇列（Claude Code 與 Codex 共用）")
@@ -767,6 +942,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.set_defaults(func=func)
         return sp
 
+    add_cmd("install", cmd_install, "安裝或更新專案共用規則，保留個人規則與任務")
     sp = add_cmd("add", cmd_add, "登記一件工作")
     sp.add_argument("title", help="標題")
     sp.add_argument("--prompt", help="要做什麼，含驗收條件；不給就用標題")
@@ -786,7 +962,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--loop", action="store_true", help="連做到佇列空為止")
     sp.add_argument("--allow-all", action="store_true",
                     help="引擎跳過所有權限確認（claude --dangerously-skip-permissions／codex 全開）；"
-                         "預設只自動接受專案內的檔案編修")
+                         "預設依各 CLI 的 acceptEdits／workspace-write 權限執行")
     sp.add_argument("--model", help="指定模型名稱（claude --model／codex -m）；不給就用 CLI 自己的預設")
     sp.add_argument("--engine", choices=ENGINES,
                     help="這一輪的 auto 任務優先跑在這個引擎上（換引擎接手時用，任務自己指定的仍然優先）")
@@ -795,10 +971,23 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("done", "fail"):
         sp = add_cmd(name, cmd_finish, f"手動把任務標成 {'done' if name == 'done' else 'failed'}")
         sp.add_argument("id")
-        sp.add_argument("--result", default="（手動結案）", help="結果摘要")
+        sp.add_argument("--result", required=True, help="結果與驗證摘要")
+        sp.add_argument("--token", required=True, help="本次 claim 回傳的 claim_token")
         sp.add_argument("--by", choices=ENGINES, help="是誰做的（對話裡自己做完就填自己）")
     sp = add_cmd("requeue", cmd_requeue, "needs_decision 或 failed 改回 queued")
     sp.add_argument("id")
+    sp.add_argument("--stopped", action="store_true", help="確認舊引擎已停止，才解除 running 占用")
+    sp.add_argument("--attempt", type=int, help="已確認的目前 attempt，避免誤解除後來的領取")
+    for name in ("checkpoint", "release"):
+        sp = add_cmd(name, cmd_checkpoint, "保存進度" if name == "checkpoint" else "保存進度並交回清單；執行後必須停手")
+        sp.add_argument("id")
+        sp.add_argument("--token", required=True)
+        sp.add_argument("--done", nargs="*", default=[])
+        sp.add_argument("--remaining", nargs="+", required=True)
+        sp.add_argument("--notes", default="")
+    sp = add_cmd("cancel", cmd_cancel, "取消尚未開始的任務")
+    sp.add_argument("id")
+    sp.add_argument("--result", required=True)
     sp = add_cmd("show", cmd_show, "把一件任務的內容與結果再印一次")
     sp.add_argument("id")
     return p
